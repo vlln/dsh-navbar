@@ -10,7 +10,7 @@
 
 ## 效果
 
-![navbar 节点导航条](docs/preview/navbar.png)
+![navbar 节点导航条（真实运行截图：右缘节点串 + active 高亮）](docs/preview/navbar.png)
 
 ## 能力
 
