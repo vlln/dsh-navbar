@@ -6,19 +6,32 @@
   "type": "module",
   "main": "lib/index.mjs",
   "exports": {
-    ".": { "default": "./lib/index.mjs" },
-    "./client": "./lib/index.js",
+    ".": {
+      "default": "./lib/index.mjs"
+    },
+    "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" }
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   },
   "dshClient": {
-    "inject": ["@deepseek-ai/dsh-client-runtime"],
+    "inject": [
+      "@deepseek-ai/dsh-client-runtime"
+    ],
     "platform": "web"
   },
   "peerDependencies": {
     "cordis": "^4.0.0-rc.7"
+  },
+  "scripts": {
+    "build": "tsdown --config ./tsdown.config.ts",
+    "prepare": "tsdown --config ./tsdown.config.ts"
+  },
+  "devDependencies": {
+    "tsdown": "0.22.2"
   }
 }
