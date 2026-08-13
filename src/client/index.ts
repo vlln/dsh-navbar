@@ -1,10 +1,10 @@
 // dsh-navbar 的浏览器端 half（自渲染 + DOM 锚点契约）。
 //
 // 实现 issue dsh-external/issues#144「对话节点导航条」规格（registry 插件
-// 版）：对话区右缘等距节点串（每 user 消息一节点）——激活药丸跟随阅读
-// 位置、悬停/聚焦玻璃预览卡（6 行截断）、点击平滑滚动 + 品牌蓝高亮环、
-// >11 节点滑动窗口、平时隐形悬停浮现磨砂胶囊、prefers-reduced-motion、
-// <2 条 user 消息自动隐藏。
+// 版）：侧边栏右缘等距节点串（每 user 消息一条横线节点）——峰值条跟随阅读
+// 位置、悬停磁吸小山伸长（39/30/21/15/9 设计比例）、悬停/聚焦预览卡
+// （6 行截断）、点击平滑滚动 + 品牌蓝高亮、>11 节点滑动窗口、
+// prefers-reduced-motion、<2 条 user 消息自动隐藏。
 //
 // 零数据通道依赖：只靠官方锚点属性（0806 起 user 行为 data-time-hover-root
 //（UserStyleBubble 行），data-chat-flow-kind 已移除）。
@@ -23,8 +23,11 @@ export default {
       style.id = STYLE_ID
       style.textContent = `
 [data-dsh-navbar] {
+  /* 基线/峰值宽度可调（默认按设计比例 9/39）。 */
+  --dsh-navbar-base-w: 9px;
+  --dsh-navbar-peak-w: 39px;
   position: fixed; top: 50%; transform: translateY(-50%); z-index: 900;
-  display: flex; flex-direction: column; gap: 10px; padding: 8px;
+  display: flex; flex-direction: column; gap: 1px; padding: 7px;
   border-radius: 12px; font-family: system-ui;
   max-height: calc(100vh - 32px); overflow-y: auto;
   background: transparent; border: 1px solid transparent;
@@ -34,14 +37,24 @@ export default {
   /* 无背景无边框：用户不要悬停时的胶囊圆角矩形（节点自身 hover 已够）。 */
 }
 [data-vlln-dot] {
-  width: 7px; height: 7px; border-radius: 999px; padding: 0; border: none;
-  background: rgba(128, 128, 140, .45); cursor: pointer; flex: none;
-  transition: width .22s ease, background .22s ease, transform .22s ease;
+  /* 统一基线宽（--dsh-navbar-base-w，默认 9px），小山轮廓由 JS 按与
+   * 峰值条的距离逐级设置（峰值 × LEVEL/13）。命中区 14px 高且透明，
+   * 视觉横线由 ::before 画在中线上：线细但仍好点中。 */
+  width: var(--dsh-navbar-base-w, 9px); height: 14px; padding: 0; border: none;
+  background: transparent; cursor: pointer; flex: none; position: relative;
+  transition: width .18s ease;
 }
-[data-vlln-dot]:hover { background: var(--dsw-alias-interactive-bg-hover); transform: scale(1.25); }
-[data-vlln-dot].active {
-  width: 22px; border-radius: 999px;
-  background: var(--dsw-alias-text-accent, #4c9aff);
+[data-vlln-dot]::before {
+  content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 100%; height: 3px; border-radius: 2px;
+  background: rgba(128, 128, 140, .45);
+  transition: background .22s ease, height .22s ease;
+}
+[data-vlln-dot]:hover::before { background: var(--dsw-alias-interactive-bg-hover); }
+[data-vlln-dot].hot::before {
+  /* 峰值条（悬停磁吸选中的那条；鼠标离开时是阅读位置激活条）：
+   * 品牌蓝 + 4px 高。 */
+  background: var(--dsw-alias-text-accent, #4c9aff); height: 4px; opacity: 1;
 }
 [data-vlln-preview] {
   /* 与官方 session 预览卡（HoverCard）同款：实色 #2C2C2E 双主题一致、
@@ -55,9 +68,9 @@ export default {
   display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical;
   pointer-events: none;
 }
-[data-vlln-more] { width: 3px; height: 3px; border-radius: 999px; background: rgba(128,128,140,.5); flex: none; }
+[data-vlln-more] { width: 8px; height: 3px; border-radius: 2px; background: rgba(128,128,140,.5); flex: none; }
 @media (prefers-reduced-motion: reduce) {
-  [data-dsh-navbar], [data-vlln-dot], [data-vlln-dot].active {
+  [data-dsh-navbar], [data-vlln-dot], [data-vlln-dot].hot {
     transition: none; animation: none;
   }
 }
@@ -94,13 +107,40 @@ export default {
       // assistant/Think 行（body 无 bubble）与 pending steering。
       !row.hasAttribute('data-pending-steering') && row.querySelector('[class*="bubble"]') !== null)
 
-    // 位置：贴近对话流列右缘 + 12px，钳制视口内（列移动时触发，不进每帧路径）。
+    // 侧边栏：用其独有的 CSS 变量识别（--dsh-sidebar-inline-padding），
+    // 找不到时回退到对话流左缘。检测结果缓存：元素仍连接且宽度 >0 时
+    // 直接复用，折叠/卸载时才重扫（避免每次定位全量遍历 div）。
+    let cachedSidebar: HTMLElement | null = null
+    const findSidebar = (): HTMLElement | null => {
+      for (const el of document.querySelectorAll<HTMLElement>('div')) {
+        const s = getComputedStyle(el)
+        if (s.getPropertyValue('--dsh-sidebar-inline-padding').trim() !== '' && el.offsetWidth > 0) {
+          return el
+        }
+      }
+      return null
+    }
+    const sidebarOf = (): HTMLElement | null => {
+      if (cachedSidebar !== null && cachedSidebar.isConnected && cachedSidebar.offsetWidth > 0) return cachedSidebar
+      cachedSidebar = findSidebar()
+      return cachedSidebar
+    }
+
+    // 位置：紧靠侧边栏右缘 + 8px；无侧边栏则贴对话流左缘。resize/RO 高频
+    // 触发源统一经 rAF 节流（render 路径自身已有节流）。
+    let posScheduled = false
+    const requestPosition = (): void => {
+      if (posScheduled) return
+      posScheduled = true
+      requestAnimationFrame(() => { posScheduled = false; position() })
+    }
     const position = (): void => {
       const flow = flowOf()
       if (flow === null) return
-      const right = flow.getBoundingClientRect().right
-      const next = Math.round(Math.min(right + 12, window.innerWidth - bar.offsetWidth - 8))
-      const nextLeft = `${Math.max(8, next)}px`
+      const sidebar = sidebarOf()
+      const anchor = sidebar !== null ? sidebar.getBoundingClientRect().right : flow.getBoundingClientRect().left
+      const next = Math.round(Math.max(anchor + 8, 8))
+      const nextLeft = `${next}px`
       if (bar.style.left !== nextLeft) bar.style.left = nextLeft
     }
 
@@ -123,16 +163,53 @@ export default {
       return found ? best : rows.length - 1
     }
 
-    const WINDOW = 11 // 超过则滑动窗口
-    const HALF_WINDOW = 5
-    // 当前窗口起点（render 设置；updateActiveClass 用同一 lo 映射窗口内 dot）。
+    const WINDOW = Number.POSITIVE_INFINITY // 始终显示全部历史，不启用滑动窗口
+    const HALF_WINDOW = 0
+    // 当前窗口起点（render 设置；applyShape 用同一 lo 映射窗口内 dot）。
     let lo = 0
+    // 上次重建时绑定的 user 行集合（render 用它做行身份判据）。
+    let builtRows: HTMLElement[] = []
+
+    // 小山轮廓：以峰值条为中心，宽度按设计比例逐级递减 39/30/21/15/9
+    // （= 峰值宽 × LEVEL/LEVEL[0]）。峰值 = 悬停磁吸最近的条；鼠标离开
+    // 导航条时峰值回到阅读位置激活条，其余条全部回到基线宽。
+    const LEVEL = [13, 10, 7, 5, 3]
+    // 基线/峰值宽从 CSS 变量读取（--dsh-navbar-base-w / --dsh-navbar-peak-w），
+    // 读取失败回退默认设计值，首次 applyShape 时惰性解析一次。
+    let baseW = 0
+    let peakW = 0
+    const ensureSizes = (): void => {
+      if (baseW > 0) return
+      const num = (name: string, fallback: number): number => {
+        const v = parseFloat(getComputedStyle(bar).getPropertyValue(name))
+        return Number.isFinite(v) ? v : fallback
+      }
+      baseW = num('--dsh-navbar-base-w', 9)
+      peakW = num('--dsh-navbar-peak-w', 39)
+    }
+    const levelWidth = (d: number): number =>
+      Math.round(peakW * LEVEL[Math.min(d, LEVEL.length - 1)] / LEVEL[0])
+    let hoverIndex: number | null = null
+    const applyShape = (): void => {
+      ensureSizes()
+      const dots = [...bar.querySelectorAll<HTMLElement>('[data-vlln-dot]')]
+      dots.forEach((dot, i) => {
+        const gi = i + lo
+        let w = baseW
+        if (hoverIndex !== null) w = levelWidth(Math.abs(gi - hoverIndex))
+        else if (gi === activeIndex) w = peakW
+        dot.style.width = `${w}px`
+        const hot = hoverIndex !== null ? gi === hoverIndex : gi === activeIndex
+        dot.classList.toggle('hot', hot)
+      })
+    }
 
     // 预览：显示消息开头（最多 6 行，CSS line-clamp 截断）。
     const positionPreview = (anchor: HTMLElement): void => {
       const r = anchor.getBoundingClientRect()
-      // right 定位：卡片右缘贴 dot 左缘 - 14px（内容短的卡片也贴紧）。
-      preview.style.right = `${window.innerWidth - r.left + 14}px`
+      // 预览卡出现在节点右侧（贴 dot 右缘 + 14px），水平钳制不越出视口
+      // （卡宽 244px + 8px 边距 + 6px 余量）。
+      preview.style.left = `${Math.min(r.right + 14, window.innerWidth - 258)}px`
       preview.style.top = `${Math.min(window.innerHeight - 120, r.top - 12)}px`
     }
     const showPreview = (row: HTMLElement, anchor: HTMLElement): void => {
@@ -170,11 +247,13 @@ export default {
       const windowed = rows.length > WINDOW
       lo = windowed ? Math.max(0, active - HALF_WINDOW) : 0
       const hi = windowed ? Math.min(rows.length - 1, active + HALF_WINDOW) : rows.length - 1
-      // 重建（点数/窗口变化时才重建；滚动只走 updateActive 不重建）。
-      const dotCount = hi - lo + 1 + (windowed ? 2 : 0) // +2 端点细点
-      if (bar.childElementCount === dotCount && rows.length >= 2) {
-        // 窗口未变：只移动激活态（重建会重挂 dot，滚动时不应重建）。
-        updateActiveClass(active)
+      // 重建判据：仅数量相同不够——会话切换/流重建后行元素全部换新，
+      // 数量恰巧相同会留下绑定旧行元素的 dot。按行身份比较决定是否重建
+      // （滚动只走 updateActive 不重建）。
+      const sameRows = rows.length === builtRows.length && rows.every((row, i) => row === builtRows[i])
+      if (sameRows) {
+        // 行未变：只移动激活态（重建会重挂 dot，滚动时不应重建）。
+        applyShape()
         return
       }
       bar.textContent = ''
@@ -198,7 +277,6 @@ export default {
         dot.addEventListener('click', () => {
           jumpToRow(row)
         })
-        if (i === active) dot.classList.add('active')
         bar.appendChild(dot)
       }
       if (windowed && hi < rows.length - 1) {
@@ -206,6 +284,9 @@ export default {
         more.setAttribute('data-vlln-more', '')
         bar.appendChild(more)
       }
+      // 重建后记录行集合，并按当前激活/悬停状态套小山轮廓。
+      builtRows = rows
+      applyShape()
     }
 
     // 点击跳转：官方 follow 在 pinned-to-bottom 时拉回非 wheel 的程序化
@@ -240,14 +321,7 @@ export default {
       requestAnimationFrame(step)
     }
 
-    // 窗口内激活态：第 i 个 dot 对应行 lo+i，只切换 class 不重建。
-    const updateActiveClass = (active: number): void => {
-      const dots = [...bar.querySelectorAll<HTMLElement>('[data-vlln-dot]')]
-      dots.forEach((dot, i) => {
-        if (i + lo === active) dot.classList.add('active')
-        else dot.classList.remove('active')
-      })
-    }
+    // 窗口内激活态由 applyShape 统一处理（激活条 = 鼠标离开时的峰值）。
 
     // 滚动只重算激活态（rAF 节流）：激活药丸滑动，不动节点重建。
     const updateActive = (): void => {
@@ -268,7 +342,7 @@ export default {
       sizeObserver?.disconnect()
       sizeObserver = null
       if (flow !== null) {
-        sizeObserver = new ResizeObserver(() => { position() })
+        sizeObserver = new ResizeObserver(() => { requestPosition() })
         // 观察 flow 及其祖先链（到 body 为止）：侧边栏折叠/展开通过
         // AppFrame 的 grid 轨道动画改变布局——flow 自身 contentRect 在
         // 部分变化下不变（ResizeObserver 只报元素自身尺寸），但任一祖先
@@ -284,16 +358,36 @@ export default {
       return true
     }
     bindFlow()
-    window.addEventListener('resize', position)
-    // 滚动监听：重算激活态（rAF 节流）。
-    let scrollScheduled = false
-    const onScroll = (): void => {
-      if (scrollScheduled) return
-      scrollScheduled = true
-      requestAnimationFrame(() => { scrollScheduled = false; updateActive() })
+    window.addEventListener('resize', requestPosition)
+    // 磁吸小山：鼠标在导航条内移动时，最近的那条成为峰值，相邻条按距离
+    // 逐级递减伸长——像一座小山，而不是只有单条伸长。只在 bar 上监听
+    // mousemove（见下方绑定），离开 bar 恢复基线。
+    const updateNear = (clientY: number): void => {
+      const dots = [...bar.querySelectorAll<HTMLElement>('[data-vlln-dot]')]
+      if (dots.length === 0) return
+      let best = 0
+      let bestDist = Number.POSITIVE_INFINITY
+      for (let i = 0; i < dots.length; i++) {
+        const r = dots[i]!.getBoundingClientRect()
+        const dist = Math.abs(clientY - (r.top + r.height / 2))
+        if (dist < bestDist) { bestDist = dist; best = i }
+      }
+      const next = best + lo
+      if (next === hoverIndex) return
+      hoverIndex = next
+      applyShape()
     }
+    const onNearMove = (event: MouseEvent): void => updateNear(event.clientY)
+    const onNearLeave = (): void => {
+      if (hoverIndex === null) return
+      hoverIndex = null
+      applyShape()
+    }
+    bar.addEventListener('mousemove', onNearMove, { passive: true })
+    bar.addEventListener('mouseleave', onNearLeave)
     // 激活跟踪用 IntersectionObserver（比 scroll 事件绑定鲁棒：行进出
     // 视口自动触发，不依赖绑定时机/重建；滚动时交叉变化即更新激活态）。
+    let scrollScheduled = false
     let io: IntersectionObserver | null = null
     const bindIO = (): void => {
       io?.disconnect()
@@ -342,7 +436,9 @@ export default {
       observer.disconnect()
       sizeObserver?.disconnect()
       io?.disconnect()
-      window.removeEventListener('resize', position)
+      window.removeEventListener('resize', requestPosition)
+      bar.removeEventListener('mousemove', onNearMove)
+      bar.removeEventListener('mouseleave', onNearLeave)
       bar.remove()
       preview.remove()
       document.getElementById(STYLE_ID)?.remove()
