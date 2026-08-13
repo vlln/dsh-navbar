@@ -94,13 +94,26 @@ export default {
       // assistant/Think 行（body 无 bubble）与 pending steering。
       !row.hasAttribute('data-pending-steering') && row.querySelector('[class*="bubble"]') !== null)
 
-    // 位置：贴近对话流列右缘 + 12px，钳制视口内（列移动时触发，不进每帧路径）。
+    // 侧边栏：用其独有的 CSS 变量识别（--dsh-sidebar-inline-padding），
+    // 找不到时回退到对话流左缘。
+    const sidebarOf = (): HTMLElement | null => {
+      for (const el of document.querySelectorAll<HTMLElement>('div')) {
+        const s = getComputedStyle(el)
+        if (s.getPropertyValue('--dsh-sidebar-inline-padding').trim() !== '' && el.offsetWidth > 0) {
+          return el
+        }
+      }
+      return null
+    }
+
+    // 位置：紧靠侧边栏右缘 + 8px；无侧边栏则贴对话流左缘。
     const position = (): void => {
       const flow = flowOf()
       if (flow === null) return
-      const right = flow.getBoundingClientRect().right
-      const next = Math.round(Math.min(right + 12, window.innerWidth - bar.offsetWidth - 8))
-      const nextLeft = `${Math.max(8, next)}px`
+      const sidebar = sidebarOf()
+      const anchor = sidebar !== null ? sidebar.getBoundingClientRect().right : flow.getBoundingClientRect().left
+      const next = Math.round(Math.max(anchor + 8, 8))
+      const nextLeft = `${next}px`
       if (bar.style.left !== nextLeft) bar.style.left = nextLeft
     }
 
@@ -131,8 +144,8 @@ export default {
     // 预览：显示消息开头（最多 6 行，CSS line-clamp 截断）。
     const positionPreview = (anchor: HTMLElement): void => {
       const r = anchor.getBoundingClientRect()
-      // right 定位：卡片右缘贴 dot 左缘 - 14px（内容短的卡片也贴紧）。
-      preview.style.right = `${window.innerWidth - r.left + 14}px`
+      // 预览卡出现在节点右侧（贴 dot 右缘 + 14px）。
+      preview.style.left = `${r.right + 14}px`
       preview.style.top = `${Math.min(window.innerHeight - 120, r.top - 12)}px`
     }
     const showPreview = (row: HTMLElement, anchor: HTMLElement): void => {
