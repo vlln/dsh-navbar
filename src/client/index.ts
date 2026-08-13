@@ -163,8 +163,8 @@ export default {
       return found ? best : rows.length - 1
     }
 
-    const WINDOW = 11 // 超过则滑动窗口
-    const HALF_WINDOW = 5
+    const WINDOW = Number.POSITIVE_INFINITY // 始终显示全部历史，不启用滑动窗口
+    const HALF_WINDOW = 0
     // 当前窗口起点（render 设置；applyShape 用同一 lo 映射窗口内 dot）。
     let lo = 0
     // 上次重建时绑定的 user 行集合（render 用它做行身份判据）。
