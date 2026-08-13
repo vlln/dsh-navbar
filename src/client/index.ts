@@ -1,10 +1,10 @@
 // dsh-navbar 的浏览器端 half（自渲染 + DOM 锚点契约）。
 //
 // 实现 issue dsh-external/issues#144「对话节点导航条」规格（registry 插件
-// 版）：对话区右缘等距节点串（每 user 消息一节点）——激活药丸跟随阅读
-// 位置、悬停/聚焦玻璃预览卡（6 行截断）、点击平滑滚动 + 品牌蓝高亮环、
-// >11 节点滑动窗口、平时隐形悬停浮现磨砂胶囊、prefers-reduced-motion、
-// <2 条 user 消息自动隐藏。
+// 版）：侧边栏右缘等距节点串（每 user 消息一条横线节点）——峰值条跟随阅读
+// 位置、悬停磁吸小山伸长（39/30/21/15/9 设计比例）、悬停/聚焦预览卡
+// （6 行截断）、点击平滑滚动 + 品牌蓝高亮、>11 节点滑动窗口、
+// prefers-reduced-motion、<2 条 user 消息自动隐藏。
 //
 // 零数据通道依赖：只靠官方锚点属性（0806 起 user 行为 data-time-hover-root
 //（UserStyleBubble 行），data-chat-flow-kind 已移除）。
@@ -23,8 +23,11 @@ export default {
       style.id = STYLE_ID
       style.textContent = `
 [data-dsh-navbar] {
+  /* 基线/峰值宽度可调（默认按设计比例 9/39）。 */
+  --dsh-navbar-base-w: 9px;
+  --dsh-navbar-peak-w: 39px;
   position: fixed; top: 50%; transform: translateY(-50%); z-index: 900;
-  display: flex; flex-direction: column; gap: 10px; padding: 8px;
+  display: flex; flex-direction: column; gap: 1px; padding: 7px;
   border-radius: 12px; font-family: system-ui;
   max-height: calc(100vh - 32px); overflow-y: auto;
   background: transparent; border: 1px solid transparent;
@@ -34,14 +37,24 @@ export default {
   /* 无背景无边框：用户不要悬停时的胶囊圆角矩形（节点自身 hover 已够）。 */
 }
 [data-vlln-dot] {
-  width: 7px; height: 7px; border-radius: 999px; padding: 0; border: none;
-  background: rgba(128, 128, 140, .45); cursor: pointer; flex: none;
-  transition: width .22s ease, background .22s ease, transform .22s ease;
+  /* 统一基线宽（--dsh-navbar-base-w，默认 9px），小山轮廓由 JS 按与
+   * 峰值条的距离逐级设置（峰值 × LEVEL/13）。命中区 14px 高且透明，
+   * 视觉横线由 ::before 画在中线上：线细但仍好点中。 */
+  width: var(--dsh-navbar-base-w, 9px); height: 14px; padding: 0; border: none;
+  background: transparent; cursor: pointer; flex: none; position: relative;
+  transition: width .18s ease;
 }
-[data-vlln-dot]:hover { background: var(--dsw-alias-interactive-bg-hover); transform: scale(1.25); }
-[data-vlln-dot].active {
-  width: 22px; border-radius: 999px;
-  background: var(--dsw-alias-text-accent, #4c9aff);
+[data-vlln-dot]::before {
+  content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 100%; height: 3px; border-radius: 2px;
+  background: rgba(128, 128, 140, .45);
+  transition: background .22s ease, height .22s ease;
+}
+[data-vlln-dot]:hover::before { background: var(--dsw-alias-interactive-bg-hover); }
+[data-vlln-dot].hot::before {
+  /* 峰值条（悬停磁吸选中的那条；鼠标离开时是阅读位置激活条）：
+   * 品牌蓝 + 4px 高。 */
+  background: var(--dsw-alias-text-accent, #4c9aff); height: 4px; opacity: 1;
 }
 [data-vlln-preview] {
   /* 与官方 session 预览卡（HoverCard）同款：实色 #2C2C2E 双主题一致、
@@ -55,9 +68,9 @@ export default {
   display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical;
   pointer-events: none;
 }
-[data-vlln-more] { width: 3px; height: 3px; border-radius: 999px; background: rgba(128,128,140,.5); flex: none; }
+[data-vlln-more] { width: 8px; height: 3px; border-radius: 2px; background: rgba(128,128,140,.5); flex: none; }
 @media (prefers-reduced-motion: reduce) {
-  [data-dsh-navbar], [data-vlln-dot], [data-vlln-dot].active {
+  [data-dsh-navbar], [data-vlln-dot], [data-vlln-dot].hot {
     transition: none; animation: none;
   }
 }
@@ -138,8 +151,42 @@ export default {
 
     const WINDOW = 11 // 超过则滑动窗口
     const HALF_WINDOW = 5
-    // 当前窗口起点（render 设置；updateActiveClass 用同一 lo 映射窗口内 dot）。
+    // 当前窗口起点（render 设置；applyShape 用同一 lo 映射窗口内 dot）。
     let lo = 0
+
+    // 小山轮廓：以峰值条为中心，宽度按设计比例逐级递减 39/30/21/15/9
+    // （= 峰值宽 × LEVEL/LEVEL[0]）。峰值 = 悬停磁吸最近的条；鼠标离开
+    // 导航条时峰值回到阅读位置激活条，其余条全部回到基线宽。
+    const LEVEL = [13, 10, 7, 5, 3]
+    // 基线/峰值宽从 CSS 变量读取（--dsh-navbar-base-w / --dsh-navbar-peak-w），
+    // 读取失败回退默认设计值，首次 applyShape 时惰性解析一次。
+    let baseW = 0
+    let peakW = 0
+    const ensureSizes = (): void => {
+      if (baseW > 0) return
+      const num = (name: string, fallback: number): number => {
+        const v = parseFloat(getComputedStyle(bar).getPropertyValue(name))
+        return Number.isFinite(v) ? v : fallback
+      }
+      baseW = num('--dsh-navbar-base-w', 9)
+      peakW = num('--dsh-navbar-peak-w', 39)
+    }
+    const levelWidth = (d: number): number =>
+      Math.round(peakW * LEVEL[Math.min(d, LEVEL.length - 1)] / LEVEL[0])
+    let hoverIndex: number | null = null
+    const applyShape = (): void => {
+      ensureSizes()
+      const dots = [...bar.querySelectorAll<HTMLElement>('[data-vlln-dot]')]
+      dots.forEach((dot, i) => {
+        const gi = i + lo
+        let w = baseW
+        if (hoverIndex !== null) w = levelWidth(Math.abs(gi - hoverIndex))
+        else if (gi === activeIndex) w = peakW
+        dot.style.width = `${w}px`
+        const hot = hoverIndex !== null ? gi === hoverIndex : gi === activeIndex
+        dot.classList.toggle('hot', hot)
+      })
+    }
 
     // 预览：显示消息开头（最多 6 行，CSS line-clamp 截断）。
     const positionPreview = (anchor: HTMLElement): void => {
@@ -187,7 +234,7 @@ export default {
       const dotCount = hi - lo + 1 + (windowed ? 2 : 0) // +2 端点细点
       if (bar.childElementCount === dotCount && rows.length >= 2) {
         // 窗口未变：只移动激活态（重建会重挂 dot，滚动时不应重建）。
-        updateActiveClass(active)
+        applyShape()
         return
       }
       bar.textContent = ''
@@ -211,7 +258,6 @@ export default {
         dot.addEventListener('click', () => {
           jumpToRow(row)
         })
-        if (i === active) dot.classList.add('active')
         bar.appendChild(dot)
       }
       if (windowed && hi < rows.length - 1) {
@@ -219,6 +265,8 @@ export default {
         more.setAttribute('data-vlln-more', '')
         bar.appendChild(more)
       }
+      // 重建后按当前激活/悬停状态套小山轮廓。
+      applyShape()
     }
 
     // 点击跳转：官方 follow 在 pinned-to-bottom 时拉回非 wheel 的程序化
@@ -253,14 +301,7 @@ export default {
       requestAnimationFrame(step)
     }
 
-    // 窗口内激活态：第 i 个 dot 对应行 lo+i，只切换 class 不重建。
-    const updateActiveClass = (active: number): void => {
-      const dots = [...bar.querySelectorAll<HTMLElement>('[data-vlln-dot]')]
-      dots.forEach((dot, i) => {
-        if (i + lo === active) dot.classList.add('active')
-        else dot.classList.remove('active')
-      })
-    }
+    // 窗口内激活态由 applyShape 统一处理（激活条 = 鼠标离开时的峰值）。
 
     // 滚动只重算激活态（rAF 节流）：激活药丸滑动，不动节点重建。
     const updateActive = (): void => {
@@ -298,6 +339,32 @@ export default {
     }
     bindFlow()
     window.addEventListener('resize', position)
+    // 磁吸小山：鼠标在导航条内移动时，最近的那条成为峰值，相邻条按距离
+    // 逐级递减伸长——像一座小山，而不是只有单条伸长。只在 bar 上监听
+    // mousemove（见下方绑定），离开 bar 恢复基线。
+    const updateNear = (clientY: number): void => {
+      const dots = [...bar.querySelectorAll<HTMLElement>('[data-vlln-dot]')]
+      if (dots.length === 0) return
+      let best = 0
+      let bestDist = Number.POSITIVE_INFINITY
+      for (let i = 0; i < dots.length; i++) {
+        const r = dots[i]!.getBoundingClientRect()
+        const dist = Math.abs(clientY - (r.top + r.height / 2))
+        if (dist < bestDist) { bestDist = dist; best = i }
+      }
+      const next = best + lo
+      if (next === hoverIndex) return
+      hoverIndex = next
+      applyShape()
+    }
+    const onNearMove = (event: MouseEvent): void => updateNear(event.clientY)
+    const onNearLeave = (): void => {
+      if (hoverIndex === null) return
+      hoverIndex = null
+      applyShape()
+    }
+    bar.addEventListener('mousemove', onNearMove, { passive: true })
+    bar.addEventListener('mouseleave', onNearLeave)
     // 滚动监听：重算激活态（rAF 节流）。
     let scrollScheduled = false
     const onScroll = (): void => {
@@ -356,6 +423,8 @@ export default {
       sizeObserver?.disconnect()
       io?.disconnect()
       window.removeEventListener('resize', position)
+      bar.removeEventListener('mousemove', onNearMove)
+      bar.removeEventListener('mouseleave', onNearLeave)
       bar.remove()
       preview.remove()
       document.getElementById(STYLE_ID)?.remove()
