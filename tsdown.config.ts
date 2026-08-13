@@ -10,7 +10,7 @@ export default [
     clean: true,
   },
   {
-    name: '@dsh-external/dsh-navbar/client',
+    name: '@vlln/dsh-navbar/client',
     entry: { client: 'src/client/index.ts' },
     outDir: 'lib',
     format: 'cjs',
@@ -20,7 +20,7 @@ export default [
     external: [/@deepseek-ai\/dsh-client-/, 'react', 'react-dom'],
     outputOptions: {
       entryFileNames: 'client.js',
-      banner: 'window.__ModuleLoader__.load({ id: "@dsh-external/dsh-navbar", factory: (require) => {',
+      banner: 'window.__ModuleLoader__.load({ id: "@vlln/dsh-navbar", factory: (require) => {',
       footer: 'return module.exports; } });',
       intro: 'var module = { exports: {} }; var exports = module.exports;',
     },

@@ -208,11 +208,14 @@ export default {
       }
     }
 
-    // 点击跳转：官方 follow 在 pinned-to-bottom 时拉回非 wheel 的程序化
-    // 滚动。做法：先派发 wheel 事件建立官方 wheel 起源（合成事件无默认
-    // 滚动），再立即改 1px scrollTop 触发第一个 scroll 事件（wheel 起源
-    // 有效期内 movedByWheel=true → atBottomRef 解除），随后手动 rAF 缓动
-    // 到目标——后续滚动即使 wheel 起源过期也不被拉回。
+    // 点击跳转（0811 适配）：官方 follow 的读者输入判定已从 wheel 起源
+    // 改为 observedTop 账本——onScroll 里 movedByReader =
+    // |scrollTop - observedTop| > 0.5，程序化写入 scrollTop 即视为读者
+    // 输入；目标不在底部阈值内时 atBottomRef 解除，后续 tipMoved 不再
+    // 拉回。因此直接一步写入目标位置即可，无需 0808 时代的 wheel hack
+    // + 1px 起步（1px 起步在底部时 isAtBottom 仍 true，流式内容一到就
+    // 被拉回——「只上移一点点」bug 根因）。保留 wheel dispatch 作为
+    // 旧基线（0808/0810 wheel 起源判定）的兼容手段。
     const jumpToRow = (row: HTMLElement): void => {
       const scroller = scrollerOf()
       if (scroller === null) return
@@ -220,24 +223,8 @@ export default {
         deltaY: -1, bubbles: true, cancelable: true,
       }))
       const target = scroller.scrollTop + row.getBoundingClientRect().top - scroller.getBoundingClientRect().top
-      const start = scroller.scrollTop
-      scroller.scrollTop = start + (target > start ? 1 : -1) // 第一步立即
-      const dist = target - start
-      const dur = Math.min(480, 160 + Math.abs(dist) * 0.25)
-      const t0 = performance.now()
-      const step = (now: number): void => {
-        // 每帧续 wheel 起源：官方 onWheel 在 2 rAF 后清空 wheelStart，
-        // 一旦过期后续滚动又被 follow 拉回；每帧重新 dispatch 让每次
-        // scroll 事件都视为用户滚轮输入。
-        scroller.dispatchEvent(new WheelEvent('wheel', {
-          deltaY: -1, bubbles: true, cancelable: true,
-        }))
-        const p = Math.min(1, (now - t0) / dur)
-        const eased = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2
-        scroller.scrollTop = start + dist * eased
-        if (p < 1) requestAnimationFrame(step)
-      }
-      requestAnimationFrame(step)
+      // 一步到位（0811 账本判定为读者输入，无拉回）；旧基线保留 wheel 兜底。
+      scroller.scrollTop = target
     }
 
     // 窗口内激活态：第 i 个 dot 对应行 lo+i，只切换 class 不重建。
