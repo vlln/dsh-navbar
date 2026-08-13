@@ -3,7 +3,7 @@
 <p align="center">对话节点导航条：对话区右缘节点串快速跳转 user 消息，悬停预览、点击跳转</p>
 
 <p align="center">
-  <img src="https://badgen.net/badge/license/BSD-3-Clause/blue" alt="license">
+  <img src="https://badgen.net/badge/license/MIT/green" alt="license">
 </p>
 
 对话区右缘的等距节点串（每 user 消息一节点）——激活药丸跟随阅读位置、悬停预览卡（6 行截断）、点击平滑滚动 + 品牌蓝高亮环、超过 11 节点自动滑动窗口、平时隐形悬停浮现、少于 2 条 user 消息自动隐藏。实现 dsh-external/issues#144 规格。形态：官方 **bundle 插件**（`dsh.bundle` + dshClient 通道，**纯浏览器端**，Node half 为空），0 patch。
