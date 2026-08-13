@@ -108,8 +108,10 @@ export default {
       !row.hasAttribute('data-pending-steering') && row.querySelector('[class*="bubble"]') !== null)
 
     // 侧边栏：用其独有的 CSS 变量识别（--dsh-sidebar-inline-padding），
-    // 找不到时回退到对话流左缘。
-    const sidebarOf = (): HTMLElement | null => {
+    // 找不到时回退到对话流左缘。检测结果缓存：元素仍连接且宽度 >0 时
+    // 直接复用，折叠/卸载时才重扫（避免每次定位全量遍历 div）。
+    let cachedSidebar: HTMLElement | null = null
+    const findSidebar = (): HTMLElement | null => {
       for (const el of document.querySelectorAll<HTMLElement>('div')) {
         const s = getComputedStyle(el)
         if (s.getPropertyValue('--dsh-sidebar-inline-padding').trim() !== '' && el.offsetWidth > 0) {
@@ -118,8 +120,20 @@ export default {
       }
       return null
     }
+    const sidebarOf = (): HTMLElement | null => {
+      if (cachedSidebar !== null && cachedSidebar.isConnected && cachedSidebar.offsetWidth > 0) return cachedSidebar
+      cachedSidebar = findSidebar()
+      return cachedSidebar
+    }
 
-    // 位置：紧靠侧边栏右缘 + 8px；无侧边栏则贴对话流左缘。
+    // 位置：紧靠侧边栏右缘 + 8px；无侧边栏则贴对话流左缘。resize/RO 高频
+    // 触发源统一经 rAF 节流（render 路径自身已有节流）。
+    let posScheduled = false
+    const requestPosition = (): void => {
+      if (posScheduled) return
+      posScheduled = true
+      requestAnimationFrame(() => { posScheduled = false; position() })
+    }
     const position = (): void => {
       const flow = flowOf()
       if (flow === null) return
@@ -153,6 +167,8 @@ export default {
     const HALF_WINDOW = 5
     // 当前窗口起点（render 设置；applyShape 用同一 lo 映射窗口内 dot）。
     let lo = 0
+    // 上次重建时绑定的 user 行集合（render 用它做行身份判据）。
+    let builtRows: HTMLElement[] = []
 
     // 小山轮廓：以峰值条为中心，宽度按设计比例逐级递减 39/30/21/15/9
     // （= 峰值宽 × LEVEL/LEVEL[0]）。峰值 = 悬停磁吸最近的条；鼠标离开
@@ -191,8 +207,9 @@ export default {
     // 预览：显示消息开头（最多 6 行，CSS line-clamp 截断）。
     const positionPreview = (anchor: HTMLElement): void => {
       const r = anchor.getBoundingClientRect()
-      // 预览卡出现在节点右侧（贴 dot 右缘 + 14px）。
-      preview.style.left = `${r.right + 14}px`
+      // 预览卡出现在节点右侧（贴 dot 右缘 + 14px），水平钳制不越出视口
+      // （卡宽 244px + 8px 边距 + 6px 余量）。
+      preview.style.left = `${Math.min(r.right + 14, window.innerWidth - 258)}px`
       preview.style.top = `${Math.min(window.innerHeight - 120, r.top - 12)}px`
     }
     const showPreview = (row: HTMLElement, anchor: HTMLElement): void => {
@@ -230,10 +247,12 @@ export default {
       const windowed = rows.length > WINDOW
       lo = windowed ? Math.max(0, active - HALF_WINDOW) : 0
       const hi = windowed ? Math.min(rows.length - 1, active + HALF_WINDOW) : rows.length - 1
-      // 重建（点数/窗口变化时才重建；滚动只走 updateActive 不重建）。
-      const dotCount = hi - lo + 1 + (windowed ? 2 : 0) // +2 端点细点
-      if (bar.childElementCount === dotCount && rows.length >= 2) {
-        // 窗口未变：只移动激活态（重建会重挂 dot，滚动时不应重建）。
+      // 重建判据：仅数量相同不够——会话切换/流重建后行元素全部换新，
+      // 数量恰巧相同会留下绑定旧行元素的 dot。按行身份比较决定是否重建
+      // （滚动只走 updateActive 不重建）。
+      const sameRows = rows.length === builtRows.length && rows.every((row, i) => row === builtRows[i])
+      if (sameRows) {
+        // 行未变：只移动激活态（重建会重挂 dot，滚动时不应重建）。
         applyShape()
         return
       }
@@ -265,7 +284,8 @@ export default {
         more.setAttribute('data-vlln-more', '')
         bar.appendChild(more)
       }
-      // 重建后按当前激活/悬停状态套小山轮廓。
+      // 重建后记录行集合，并按当前激活/悬停状态套小山轮廓。
+      builtRows = rows
       applyShape()
     }
 
@@ -322,7 +342,7 @@ export default {
       sizeObserver?.disconnect()
       sizeObserver = null
       if (flow !== null) {
-        sizeObserver = new ResizeObserver(() => { position() })
+        sizeObserver = new ResizeObserver(() => { requestPosition() })
         // 观察 flow 及其祖先链（到 body 为止）：侧边栏折叠/展开通过
         // AppFrame 的 grid 轨道动画改变布局——flow 自身 contentRect 在
         // 部分变化下不变（ResizeObserver 只报元素自身尺寸），但任一祖先
@@ -338,7 +358,7 @@ export default {
       return true
     }
     bindFlow()
-    window.addEventListener('resize', position)
+    window.addEventListener('resize', requestPosition)
     // 磁吸小山：鼠标在导航条内移动时，最近的那条成为峰值，相邻条按距离
     // 逐级递减伸长——像一座小山，而不是只有单条伸长。只在 bar 上监听
     // mousemove（见下方绑定），离开 bar 恢复基线。
@@ -365,15 +385,9 @@ export default {
     }
     bar.addEventListener('mousemove', onNearMove, { passive: true })
     bar.addEventListener('mouseleave', onNearLeave)
-    // 滚动监听：重算激活态（rAF 节流）。
-    let scrollScheduled = false
-    const onScroll = (): void => {
-      if (scrollScheduled) return
-      scrollScheduled = true
-      requestAnimationFrame(() => { scrollScheduled = false; updateActive() })
-    }
     // 激活跟踪用 IntersectionObserver（比 scroll 事件绑定鲁棒：行进出
     // 视口自动触发，不依赖绑定时机/重建；滚动时交叉变化即更新激活态）。
+    let scrollScheduled = false
     let io: IntersectionObserver | null = null
     const bindIO = (): void => {
       io?.disconnect()
@@ -422,7 +436,7 @@ export default {
       observer.disconnect()
       sizeObserver?.disconnect()
       io?.disconnect()
-      window.removeEventListener('resize', position)
+      window.removeEventListener('resize', requestPosition)
       bar.removeEventListener('mousemove', onNearMove)
       bar.removeEventListener('mouseleave', onNearLeave)
       bar.remove()
