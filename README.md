@@ -58,4 +58,4 @@ pnpm run build      # tsdown：client bundle (lib/client.js)
 
 ## 许可
 
-BSD-3-Clause（DSH 生态示例插件）。
+MIT License（DSH 生态示例插件）。
