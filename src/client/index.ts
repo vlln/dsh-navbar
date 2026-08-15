@@ -197,6 +197,46 @@ export default {
     // 上次重建时绑定的 user 行集合（render 用行身份判据决定是否重建）。
     let builtRows: HTMLElement[] = []
 
+    interface PinItem { messageId: string; text: string; ts: number; turn?: number }
+    let currentSessionId: string | null = null
+    // 从任意精选按钮读当前会话 id（PinAction 渲染在聊天视图；聚焦视图
+    // 复用缓存值——同一会话内切换视图）。
+    const syncSessionId = (): void => {
+      const btn = document.querySelector<HTMLElement>('[data-vlln-pin-button][data-session-id]')
+      if (btn !== null) currentSessionId = btn.getAttribute('data-session-id') ?? currentSessionId
+    }
+    const pinStore = {
+      key(sessionId: string): string { return `dsh-navbar:pins:${sessionId}` },
+      load(sessionId: string): PinItem[] {
+        try { return JSON.parse(localStorage.getItem(this.key(sessionId)) ?? '[]') as PinItem[] } catch { return [] }
+      },
+      isPinned(sessionId: string, messageId: string): boolean {
+        return this.load(sessionId).some((p) => p.messageId === messageId)
+      },
+      textOf(sessionId: string, messageId: string): string | undefined {
+        return this.load(sessionId).find((p) => p.messageId === messageId)?.text
+      },
+      // 当前会话已精选的回合号集合（聚焦视图按 data-turn-tail 匹配用）。
+      turnsOf(sessionId: string): Set<number> {
+        const s = new Set<number>()
+        for (const p of this.load(sessionId)) if (p.turn !== undefined && Number.isFinite(p.turn)) s.add(p.turn)
+        return s
+      },
+      textOfTurn(sessionId: string, turn: number): string | undefined {
+        return this.load(sessionId).find((p) => p.turn === turn)?.text
+      },
+      // 切换一条精选；返回切换后的状态（true = 已精选）。
+      toggle(sessionId: string, messageId: string, text: string, turn?: number): boolean {
+        const pins = this.load(sessionId)
+        const i = pins.findIndex((p) => p.messageId === messageId)
+        if (i >= 0) pins.splice(i, 1)
+        else pins.push({ messageId, text, ts: Date.now(), turn })
+        localStorage.setItem(this.key(sessionId), JSON.stringify(pins))
+        return i < 0
+      },
+    }
+
+
     // 预览：显示消息开头（最多 6 行，CSS line-clamp 截断）。精选轮次显示
     // 被精选回合的上下文文本（pin 时按回合号存入 localStorage；聚焦视图
     // 无行属性，按 data-turn-tail 从 store 读）。
@@ -589,44 +629,6 @@ export default {
     // 属性（data-vlln-pinned / data-vlln-pin-text）只是聊天视图的投影。
     // 聚焦视图（dsh-focus-chat）不渲染 PinAction、无行属性——导航条按
     // data-turn-tail 回合号与 localStorage 匹配，两视图一致显示精选。
-    interface PinItem { messageId: string; text: string; ts: number; turn?: number }
-    let currentSessionId: string | null = null
-    // 从任意精选按钮读当前会话 id（PinAction 渲染在聊天视图；聚焦视图
-    // 复用缓存值——同一会话内切换视图）。
-    const syncSessionId = (): void => {
-      const btn = document.querySelector<HTMLElement>('[data-vlln-pin-button][data-session-id]')
-      if (btn !== null) currentSessionId = btn.getAttribute('data-session-id') ?? currentSessionId
-    }
-    const pinStore = {
-      key(sessionId: string): string { return `dsh-navbar:pins:${sessionId}` },
-      load(sessionId: string): PinItem[] {
-        try { return JSON.parse(localStorage.getItem(this.key(sessionId)) ?? '[]') as PinItem[] } catch { return [] }
-      },
-      isPinned(sessionId: string, messageId: string): boolean {
-        return this.load(sessionId).some((p) => p.messageId === messageId)
-      },
-      textOf(sessionId: string, messageId: string): string | undefined {
-        return this.load(sessionId).find((p) => p.messageId === messageId)?.text
-      },
-      // 当前会话已精选的回合号集合（聚焦视图按 data-turn-tail 匹配用）。
-      turnsOf(sessionId: string): Set<number> {
-        const s = new Set<number>()
-        for (const p of this.load(sessionId)) if (p.turn !== undefined && Number.isFinite(p.turn)) s.add(p.turn)
-        return s
-      },
-      textOfTurn(sessionId: string, turn: number): string | undefined {
-        return this.load(sessionId).find((p) => p.turn === turn)?.text
-      },
-      // 切换一条精选；返回切换后的状态（true = 已精选）。
-      toggle(sessionId: string, messageId: string, text: string, turn?: number): boolean {
-        const pins = this.load(sessionId)
-        const i = pins.findIndex((p) => p.messageId === messageId)
-        if (i >= 0) pins.splice(i, 1)
-        else pins.push({ messageId, text, ts: Date.now(), turn })
-        localStorage.setItem(this.key(sessionId), JSON.stringify(pins))
-        return i < 0
-      },
-    }
     // pin 时的上下文文本：回复正文在折叠态不在 DOM（turnTail 只渲染统计行
     // + 操作条，assistantText 只在 copy 闭包里），取该回合的 user 消息文本
     // （向前找最近的 user 行气泡）作为精选上下文。
