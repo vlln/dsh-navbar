@@ -18,6 +18,7 @@
 // 对应轮次的节点渲染为金色细长椭圆盘（恒可见、预览显示精选上下文、点击
 // 直达被精选的回复）。
 import React from 'react'
+import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 export default {
   name: 'navbar-client',
   // ctx：cordis 客户端根上下文（slots/locale/effect 服务）。
@@ -680,6 +681,9 @@ export default {
       }, [messageId, sessionId])
       const label = active ? t('action.unpin') : t('action.pin')
       return React.createElement(
+        Tooltip,
+        { label, side: 'bottom' },
+        React.createElement(
         'button',
         {
           type: 'button',
@@ -689,7 +693,6 @@ export default {
           'data-active': active || undefined,
           'aria-pressed': active,
           'aria-label': label,
-          title: label,
           onClick: () => {
             const text = pinRowText(ref.current)
             // 回合号：按钮所在行（turnTail）的 data-turn-tail；聚焦视图按
@@ -704,6 +707,7 @@ export default {
           'svg',
           { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'currentColor', 'aria-hidden': true },
           React.createElement('path', { d: 'M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z' })
+        )
         )
       )
     }
