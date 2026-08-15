@@ -35,14 +35,26 @@ export default {
 }
 [data-vlln-dot] {
   width: 7px; height: 7px; border-radius: 999px; padding: 0; border: none;
-  background: rgba(128, 128, 140, .45); cursor: pointer; flex: none;
+  background: rgba(128, 128, 140, .45); cursor: pointer; flex: none; position: relative;
   transition: width .22s ease, background .22s ease, transform .22s ease;
+}
+/* 命中区放大：视觉药丸仍 7px，::after 向四周扩 6px（19px 热区），布局零变化。 */
+[data-vlln-dot]::after {
+  content: ''; position: absolute; inset: -6px; border-radius: 999px;
 }
 [data-vlln-dot]:hover { background: var(--dsw-alias-interactive-bg-hover); transform: scale(1.25); }
 [data-vlln-dot].active {
   width: 22px; border-radius: 999px;
   background: var(--dsw-alias-text-accent, #4c9aff);
 }
+/* 悬停跟随：最近药丸加长（灰色，非品牌蓝），指示"整条可点"的点击落点。
+ * transform:none 抵消 :hover 的 scale(1.25)——加长后宽度统一 22px。 */
+[data-vlln-dot].hover {
+  width: 22px; border-radius: 999px; transform: none;
+  background: rgba(128, 128, 140, .8);
+}
+/* 悬停中的激活药丸保持品牌蓝（active 优先）。 */
+[data-vlln-dot].active.hover { background: var(--dsw-alias-text-accent, #4c9aff); }
 [data-vlln-preview] {
   /* 与官方 session 预览卡（HoverCard）同款：实色 #2C2C2E 双主题一致、
    * 244 宽、r12、lv3 阴影——同类型 hover 预览卡视觉统一，不用玻璃。 */
@@ -103,6 +115,14 @@ export default {
       const nextLeft = `${Math.max(8, next)}px`
       if (bar.style.left !== nextLeft) bar.style.left = nextLeft
     }
+    // 位置重算统一 rAF 节流：resize 与 ResizeObserver（侧边栏折叠/展开动画
+    // 一帧多次回调）合并成一帧一次布局读写，避免 layout thrash。
+    let posScheduled = false
+    const requestPosition = (): void => {
+      if (posScheduled) return
+      posScheduled = true
+      requestAnimationFrame(() => { posScheduled = false; position() })
+    }
 
     // 激活态：当前阅读头经过的最后一条 user 消息。滚动只重算激活（rAF
     // 节流，无逐帧测量）；激活药丸在节点串上滑动。
@@ -127,6 +147,8 @@ export default {
     const HALF_WINDOW = 5
     // 当前窗口起点（render 设置；updateActiveClass 用同一 lo 映射窗口内 dot）。
     let lo = 0
+    // 上次重建时绑定的 user 行集合（render 用行身份判据决定是否重建）。
+    let builtRows: HTMLElement[] = []
 
     // 预览：显示消息开头（最多 6 行，CSS line-clamp 截断）。
     const positionPreview = (anchor: HTMLElement): void => {
@@ -170,10 +192,13 @@ export default {
       const windowed = rows.length > WINDOW
       lo = windowed ? Math.max(0, active - HALF_WINDOW) : 0
       const hi = windowed ? Math.min(rows.length - 1, active + HALF_WINDOW) : rows.length - 1
-      // 重建（点数/窗口变化时才重建；滚动只走 updateActive 不重建）。
-      const dotCount = hi - lo + 1 + (windowed ? 2 : 0) // +2 端点细点
-      if (bar.childElementCount === dotCount && rows.length >= 2) {
-        // 窗口未变：只移动激活态（重建会重挂 dot，滚动时不应重建）。
+      // 重建判据：行元素身份逐一相等（会话切换/流重建后行换新，数量相同
+      // 也不该走快速路径——否则 dot 残留旧行绑定）+ 当前子元素数与应建
+      // 结构一致（窗口滑到端点时端点细点增减也要重建）。
+      const expectedCount = hi - lo + 1 + (lo > 0 ? 1 : 0) + (hi < rows.length - 1 ? 1 : 0)
+      const sameRows = rows.length === builtRows.length && rows.every((row, i) => row === builtRows[i])
+      if (sameRows && bar.childElementCount === expectedCount) {
+        // 行与结构未变：只移动激活态（重建会重挂 dot，滚动时不应重建）。
         updateActiveClass(active)
         return
       }
@@ -190,13 +215,19 @@ export default {
         // aria-label 而非 title：title 会叠加浏览器原生 tooltip（与预览卡
         // 重复）；aria-label 不显示 tooltip 但保留可访问名。
         dot.setAttribute('aria-label', `user #${i + 1}（点击跳转）`)
-        const row = rows[i]!
-        dot.addEventListener('mouseenter', () => showPreview(row, dot))
-        dot.addEventListener('mouseleave', hidePreview)
-        dot.addEventListener('focus', () => showPreview(row, dot))
+        // 窗口内序号（第 p 个 dot ↔ 行 lo+p）。事件触发时用当前 lo 动态
+        // 解析行——窗口滑动不重建时也能命中正确消息（无过期闭包）。
+        const p = i - lo
+        // hover 由导航条级 mousemove 统一处理（整条连续交互，间隙无死区）；
+        // 药丸只保留键盘 focus/blur 与点击。
+        dot.addEventListener('focus', () => {
+          const row = userRows()[lo + p]
+          if (row !== undefined) showPreview(row, dot)
+        })
         dot.addEventListener('blur', hidePreview)
         dot.addEventListener('click', () => {
-          jumpToRow(row)
+          const row = userRows()[lo + p]
+          if (row !== undefined) jumpToRow(row)
         })
         if (i === active) dot.classList.add('active')
         bar.appendChild(dot)
@@ -206,6 +237,7 @@ export default {
         more.setAttribute('data-vlln-more', '')
         bar.appendChild(more)
       }
+      builtRows = rows
     }
 
     // 点击跳转（0811 适配）：官方 follow 的读者输入判定已从 wheel 起源
@@ -255,7 +287,7 @@ export default {
       sizeObserver?.disconnect()
       sizeObserver = null
       if (flow !== null) {
-        sizeObserver = new ResizeObserver(() => { position() })
+        sizeObserver = new ResizeObserver(() => { requestPosition() })
         // 观察 flow 及其祖先链（到 body 为止）：侧边栏折叠/展开通过
         // AppFrame 的 grid 轨道动画改变布局——flow 自身 contentRect 在
         // 部分变化下不变（ResizeObserver 只报元素自身尺寸），但任一祖先
@@ -271,13 +303,17 @@ export default {
       return true
     }
     bindFlow()
-    window.addEventListener('resize', position)
-    // 滚动监听：重算激活态（rAF 节流）。
+    window.addEventListener('resize', requestPosition)
+    // 滚动监听：重算激活态（rAF 节流，scroll 与 IO 共用）。
     let scrollScheduled = false
+    const runUpdate = (): void => {
+      scrollScheduled = false
+      updateActive()
+    }
     const onScroll = (): void => {
       if (scrollScheduled) return
       scrollScheduled = true
-      requestAnimationFrame(() => { scrollScheduled = false; updateActive() })
+      requestAnimationFrame(runUpdate)
     }
     // 激活跟踪用 IntersectionObserver（比 scroll 事件绑定鲁棒：行进出
     // 视口自动触发，不依赖绑定时机/重建；滚动时交叉变化即更新激活态）。
@@ -289,7 +325,7 @@ export default {
       io = new IntersectionObserver(() => {
         if (scrollScheduled) return
         scrollScheduled = true
-        requestAnimationFrame(() => { scrollScheduled = false; updateActive() })
+        requestAnimationFrame(runUpdate)
       }, { root, rootMargin: '0px 0px -15% 0px', threshold: [0, 0.25, 0.5, 0.75, 1] })
       userRows().forEach(row => { io?.observe(row) })
     }
@@ -324,12 +360,109 @@ export default {
     })
     observer.observe(body, { childList: true, subtree: true })
 
+    // 最近节点：按鼠标 Y 取垂直最近药丸（窗口内第 i 个 dot 对应行
+    // lo+i，与 render 的窗口映射一致）。hover 预览与整条点击共用。
+    const nearestDot = (y: number): { dot: HTMLElement; row: HTMLElement } | null => {
+      const dots = [...bar.querySelectorAll<HTMLElement>('[data-vlln-dot]')]
+      if (dots.length === 0) return null
+      let best: HTMLElement | null = null
+      let bestDist = Number.POSITIVE_INFINITY
+      for (const dot of dots) {
+        const r = dot.getBoundingClientRect()
+        const d = Math.abs(r.top + r.height / 2 - y)
+        if (d < bestDist) { bestDist = d; best = dot }
+      }
+      if (best === null) return null
+      const row = userRows()[lo + dots.indexOf(best)]
+      if (row === undefined) return null
+      return { dot: best, row }
+    }
+    // hover 生效范围：只在节点串垂直范围内（首药丸顶缘～末药丸底缘）。
+    // bar 上下 padding / 端点细点区不响应——否则光标落在空隙里会把边缘
+    // 药丸拉长，看起来像"最下方/最上方凭空多出一个药丸"。点击仍整条可点。
+    const hoverableDot = (y: number): { dot: HTMLElement; row: HTMLElement } | null => {
+      const dots = [...bar.querySelectorAll<HTMLElement>('[data-vlln-dot]')]
+      if (dots.length === 0) return null
+      const first = dots[0]!.getBoundingClientRect()
+      const last = dots[dots.length - 1]!.getBoundingClientRect()
+      if (y < first.top - 1 || y > last.bottom + 1) return null
+      return nearestDot(y)
+    }
+
+    // 连续悬停：整条导航条（含药丸间隙/padding/端点细点）都响应 hover——
+    // 按鼠标 Y 取垂直最近药丸：弹预览 + 该药丸加长（灰色）指示点击落点，
+    // 相邻节点在中点切换，无死区。rAF 节流。
+    let hoverScheduled = false
+    let hoverRow: HTMLElement | null = null
+    let hoverAnchor: HTMLElement | null = null
+    let hoverDotEl: HTMLElement | null = null
+    const setHoverDot = (dot: HTMLElement | null): void => {
+      if (hoverDotEl === dot) return
+      hoverDotEl?.classList.remove('hover')
+      hoverDotEl = dot
+      dot?.classList.add('hover')
+    }
+    const onBarMove = (e: MouseEvent): void => {
+      if (hoverScheduled) return
+      hoverScheduled = true
+      requestAnimationFrame(() => {
+        hoverScheduled = false
+        const hit = hoverableDot(e.clientY)
+        setHoverDot(hit !== null ? hit.dot : null)
+        if (hit === null) {
+          // 移出节点串范围（上下 padding/端点细点区）：清掉残留预览。
+          hoverRow = null
+          hoverAnchor = null
+          hidePreview()
+          return
+        }
+        if (hoverRow === hit.row && hoverAnchor === hit.dot) return
+        hoverRow = hit.row
+        hoverAnchor = hit.dot
+        showPreview(hit.row, hit.dot)
+      })
+    }
+    bar.addEventListener('mousemove', onBarMove)
+    bar.addEventListener('mouseleave', () => {
+      setHoverDot(null)
+      hoverRow = null
+      hoverAnchor = null
+      hidePreview()
+    })
+
+    // 整条导航条可点：点击任意位置（含间隙/padding/端点细点）跳到最近
+    // 节点——不再需要精确瞄准 7px 小圆点。药丸自身点击仍走各自 handler
+    // （精确命中 + 键盘激活）。
+    bar.addEventListener('click', (e) => {
+      const t = e.target as HTMLElement | null
+      if (t !== null && t.closest('[data-vlln-dot]') !== null) return
+      const hit = nearestDot(e.clientY)
+      if (hit !== null) jumpToRow(hit.row)
+    })
+
+    // 滚轮切换：光标在导航条上时，向上滚=上一条、向下滚=下一条；preventDefault
+    // 阻止对话区滚动。节流（120ms）防一次滚轮脉冲连跳多条。
+    let lastWheelAt = 0
+    bar.addEventListener('wheel', (e) => {
+      e.preventDefault()
+      const now = performance.now()
+      if (now - lastWheelAt < 120) return
+      lastWheelAt = now
+      const rows = userRows()
+      if (rows.length < 2) return
+      const base = activeIndex >= 0 ? activeIndex : computeActive()
+      if (base < 0) return
+      const next = Math.min(rows.length - 1, Math.max(0, base + (e.deltaY > 0 ? 1 : -1)))
+      if (next === base) return
+      jumpToRow(rows[next])
+    }, { passive: false })
+
     // 插件生命周期：unload 时清理（fiber dispose → apply 返回的 disposer）。
     return () => {
       observer.disconnect()
       sizeObserver?.disconnect()
       io?.disconnect()
-      window.removeEventListener('resize', position)
+      window.removeEventListener('resize', requestPosition)
       bar.remove()
       preview.remove()
       document.getElementById(STYLE_ID)?.remove()
