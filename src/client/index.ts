@@ -13,9 +13,9 @@
 //（CJS + ModuleLoader 包装）。
 //
 // pin 精选：在 assistant 消息操作条（copy 与 Good response 之间）注册
-// 📌 按钮；精选状态按会话持久化到 localStorage，并以行属性
+// 精选按钮；精选状态按会话持久化到 localStorage，并以行属性
 // data-vlln-pinned / data-vlln-pin-text 作为 DOM 契约——导航条据此把
-// 对应轮次的节点渲染为金色细长椭圆盘（恒可见、预览卡带 📌 徽标、点击
+// 对应轮次的节点渲染为金色细长椭圆盘（恒可见、预览显示精选上下文、点击
 // 直达被精选的回复）。
 import React from 'react'
 export default {
@@ -90,7 +90,10 @@ export default {
   /* 精选轮次：金色细长椭圆盘——与普通深灰圆点（7×7）和激活蓝药丸
    * （22×7）都不同的第三形态，尺寸适中、hover 不膨胀突兀。 */
   width: 14px; height: 8px; border-radius: 999px; background: #f0b429;
-  filter: drop-shadow(0 0 4px rgba(240, 180, 41, .6));
+}
+/* 精选盘 hover 同样加长（保持金色，与普通药丸一致的 hover 反馈）。 */
+[data-vlln-dot].pinned.hover {
+  width: 22px; height: 8px; background: #f0b429;
 }
 [data-vlln-dot].active.pinned {
   /* 激活中的精选点：拉长为金色胶囊，保持"盘"的细长形态语义。 */
@@ -195,7 +198,8 @@ export default {
     let builtRows: HTMLElement[] = []
 
     // 预览：显示消息开头（最多 6 行，CSS line-clamp 截断）。精选轮次显示
-    // 被精选回复的文本（pin 时存入行属性 data-vlln-pin-text）并加 📌 徽标。
+    // 被精选回合的上下文文本（pin 时按回合号存入 localStorage；聚焦视图
+    // 无行属性，按 data-turn-tail 从 store 读）。
     const positionPreview = (anchor: HTMLElement): void => {
       const r = anchor.getBoundingClientRect()
       // right 定位：卡片右缘贴 dot 左缘 - 14px（内容短的卡片也贴紧）。
@@ -209,9 +213,13 @@ export default {
       // 500ms 防误触延迟）。
       let text: string
       if (pinnedRow !== null) {
-        text = (pinnedRow.getAttribute('data-vlln-pin-text') ?? '').trim()
+        // 优先 localStorage（按回合号，聚焦视图可用）；回退行属性（聊天视图）。
+        const turn = Number(pinnedRow.getAttribute('data-turn-tail') ?? NaN)
+        const stored = Number.isFinite(turn) && currentSessionId !== null
+          ? pinStore.textOfTurn(currentSessionId, turn)
+          : undefined
+        text = (stored ?? pinnedRow.getAttribute('data-vlln-pin-text') ?? '').trim()
         if (text === '') text = ((row.querySelector('[class*="bubble"]') ?? row).textContent ?? '').trim()
-        else text = `📌 精选\n${text}`
       } else {
         const bubble = row.querySelector('[class*="bubble"]')
         text = ((bubble ?? row).textContent ?? '').trim()
@@ -225,13 +233,20 @@ export default {
 
     // 轮次精选映射：user 行 i 与其下一 user 行之间的 assistant 行中，返回
     // 第一个带 data-vlln-pinned 标记的（供高亮/预览/跳转使用），没有则 null。
-    const pinnedRowOf = (all: HTMLElement[], rows: HTMLElement[], i: number): HTMLElement | null => {
+    const pinnedRowOf = (all: HTMLElement[], rows: HTMLElement[], i: number, turns: Set<number>): HTMLElement | null => {
       let start = -1
       for (let k = 0; k < all.length; k++) { if (all[k] === rows[i]) { start = k; break } }
       if (start < 0) return null
       const end = i + 1 < rows.length ? all.indexOf(rows[i + 1]) : all.length
       if (end < 0) return null
-      for (let k = start; k < end; k++) { if (all[k]?.hasAttribute('data-vlln-pinned')) return all[k]! }
+      for (let k = start; k < end; k++) {
+        const row = all[k]!
+        // 聊天视图：行属性（PinAction 维护）；聚焦视图：按 data-turn-tail
+        // 回合号与 localStorage 精选集匹配（两视图同一会话数据，回合号一致）。
+        if (row.hasAttribute('data-vlln-pinned')) return row
+        const turn = Number(row.getAttribute('data-turn-tail') ?? NaN)
+        if (Number.isFinite(turn) && turns.has(turn)) return row
+      }
       return null
     }
 
@@ -252,9 +267,12 @@ export default {
       bar.style.display = 'flex'
       const active = computeActive()
       activeIndex = active
-      // 精选轮次：每 user 行对应的 assistant 区间内是否有 data-vlln-pinned 行。
+      // 精选轮次：每 user 行对应的 assistant 区间内是否有精选行。先从精选
+      // 按钮同步当前会话 id，再算已精选回合集（聚焦视图按回合号匹配）。
       const all = allRows()
-      const pinnedRowOfTurn = (i: number): HTMLElement | null => pinnedRowOf(all, rows, i)
+      syncSessionId()
+      const pinnedTurns = currentSessionId !== null ? pinStore.turnsOf(currentSessionId) : new Set<number>()
+      const pinnedRowOfTurn = (i: number): HTMLElement | null => pinnedRowOf(all, rows, i, pinnedTurns)
       const pinnedIndexes: number[] = []
       for (let i = 0; i < rows.length; i++) if (pinnedRowOfTurn(i) !== null) pinnedIndexes.push(i)
       // 窗口：>11 节点时截断（显示激活附近一段），端点细点暗示还有更多；
@@ -510,9 +528,10 @@ export default {
       if (hoverRow === hit.row && hoverAnchor === hit.dot) return
       hoverRow = hit.row
       hoverAnchor = hit.dot
-      // 悬停精选节点：预览带 📌 徽标（pinnedRowOf 取该轮次的精选回复行）。
+      // 悬停精选节点：预览该回合精选上下文（pinnedRowOf 取精选行）。
       const dots = [...bar.querySelectorAll<HTMLElement>('[data-vlln-dot]')]
-      const pinned = pinnedRowOf(allRows(), userRows(), lo + dots.indexOf(hit.dot))
+      const turns = currentSessionId !== null ? pinStore.turnsOf(currentSessionId) : new Set<number>()
+      const pinned = pinnedRowOf(allRows(), userRows(), lo + dots.indexOf(hit.dot), turns)
       showPreview(hit.row, hit.dot, pinned)
     }
     const onBarMove = (e: MouseEvent): void => {
@@ -543,7 +562,8 @@ export default {
       if (hit === null) return
       // 整条点击同样尊重精选语义：命中精选轮次则直达被精选的回复。
       const dots = [...bar.querySelectorAll<HTMLElement>('[data-vlln-dot]')]
-      const pinned = pinnedRowOf(allRows(), userRows(), lo + dots.indexOf(hit.dot))
+      const turns = currentSessionId !== null ? pinStore.turnsOf(currentSessionId) : new Set<number>()
+      const pinned = pinnedRowOf(allRows(), userRows(), lo + dots.indexOf(hit.dot), turns)
       jumpToRow(pinned ?? hit.row)
     })
 
@@ -565,12 +585,18 @@ export default {
     }, { passive: false })
 
     // ─── pin 精选 ──────────────────────────────────────────────────
-    // 精选状态：按会话持久化到 localStorage；DOM 契约 = assistant 行上的
-    // data-vlln-pinned（标记）与 data-vlln-pin-text（回复文本预览）。行标记
-    // 由 PinAction 在挂载时按 store 恢复，导航条只读属性、不碰 store——
-    // 刷新后精选状态由按钮组件自动重建，导航条 MutationObserver 之外还
-    // 需要显式 schedule()（属性变更不触发 childList 观察）。
-    interface PinItem { messageId: string; text: string; ts: number }
+    // 精选状态：按会话持久化到 localStorage（PinItem 含回合号 turn），DOM
+    // 属性（data-vlln-pinned / data-vlln-pin-text）只是聊天视图的投影。
+    // 聚焦视图（dsh-focus-chat）不渲染 PinAction、无行属性——导航条按
+    // data-turn-tail 回合号与 localStorage 匹配，两视图一致显示精选。
+    interface PinItem { messageId: string; text: string; ts: number; turn?: number }
+    let currentSessionId: string | null = null
+    // 从任意精选按钮读当前会话 id（PinAction 渲染在聊天视图；聚焦视图
+    // 复用缓存值——同一会话内切换视图）。
+    const syncSessionId = (): void => {
+      const btn = document.querySelector<HTMLElement>('[data-vlln-pin-button][data-session-id]')
+      if (btn !== null) currentSessionId = btn.getAttribute('data-session-id') ?? currentSessionId
+    }
     const pinStore = {
       key(sessionId: string): string { return `dsh-navbar:pins:${sessionId}` },
       load(sessionId: string): PinItem[] {
@@ -582,22 +608,39 @@ export default {
       textOf(sessionId: string, messageId: string): string | undefined {
         return this.load(sessionId).find((p) => p.messageId === messageId)?.text
       },
+      // 当前会话已精选的回合号集合（聚焦视图按 data-turn-tail 匹配用）。
+      turnsOf(sessionId: string): Set<number> {
+        const s = new Set<number>()
+        for (const p of this.load(sessionId)) if (p.turn !== undefined && Number.isFinite(p.turn)) s.add(p.turn)
+        return s
+      },
+      textOfTurn(sessionId: string, turn: number): string | undefined {
+        return this.load(sessionId).find((p) => p.turn === turn)?.text
+      },
       // 切换一条精选；返回切换后的状态（true = 已精选）。
-      toggle(sessionId: string, messageId: string, text: string): boolean {
+      toggle(sessionId: string, messageId: string, text: string, turn?: number): boolean {
         const pins = this.load(sessionId)
         const i = pins.findIndex((p) => p.messageId === messageId)
         if (i >= 0) pins.splice(i, 1)
-        else pins.push({ messageId, text, ts: Date.now() })
+        else pins.push({ messageId, text, ts: Date.now(), turn })
         localStorage.setItem(this.key(sessionId), JSON.stringify(pins))
         return i < 0
       },
     }
-    // pin 时的回复文本：行首个子节点（turnTail 渲染结果），取不到回退整行。
+    // pin 时的上下文文本：回复正文在折叠态不在 DOM（turnTail 只渲染统计行
+    // + 操作条，assistantText 只在 copy 闭包里），取该回合的 user 消息文本
+    // （向前找最近的 user 行气泡）作为精选上下文。
     const pinRowText = (button: HTMLElement | null): string => {
-      const row = button?.closest('[data-time-hover-root]')
-      const tail = row?.children[0]
-      const text = ((tail ?? row)?.textContent ?? '').trim()
-      return text.length > 160 ? `${text.slice(0, 160)}…` : text
+      let el: HTMLElement | null = button?.closest('[data-time-hover-root]') ?? null
+      while (el !== null) {
+        const bubble = el.querySelector('[class*="bubble"]')
+        if (el.hasAttribute('data-time-hover-root') && bubble !== null) {
+          const text = ((bubble ?? el).textContent ?? '').trim()
+          return text.length > 160 ? `${text.slice(0, 160)}…` : text
+        }
+        el = el.previousElementSibling as HTMLElement | null
+      }
+      return ''
     }
     // 同步行标记 + 触发导航条重渲染（属性变更不走 MutationObserver）。
     const syncPinRow = (button: HTMLElement | null, isPinned: boolean, text?: string): void => {
@@ -628,13 +671,17 @@ export default {
           type: 'button',
           ref,
           'data-vlln-pin-button': '',
+          'data-session-id': sessionId,
           'data-active': active || undefined,
           'aria-pressed': active,
           'aria-label': label,
           title: label,
           onClick: () => {
             const text = pinRowText(ref.current)
-            const next = pinStore.toggle(sessionId, messageId, text)
+            // 回合号：按钮所在行（turnTail）的 data-turn-tail；聚焦视图按
+            // 它匹配精选（两视图同一会话数据，回合号一致）。
+            const turn = Number(ref.current?.closest('[data-time-hover-root]')?.getAttribute('data-turn-tail') ?? NaN)
+            const next = pinStore.toggle(sessionId, messageId, text, Number.isFinite(turn) ? turn : undefined)
             setActive(next)
             syncPinRow(ref.current, next, text)
           },
