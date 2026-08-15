@@ -157,7 +157,13 @@ export default {
       [...document.querySelectorAll<HTMLElement>('[data-time-hover-root]')].filter(row =>
         !row.hasAttribute('data-pending-steering'))
     const userRows = (): HTMLElement[] =>
-      allRows().filter(row => row.querySelector('[class*="bubble"]') !== null)
+      allRows().filter(row =>
+        // user 行识别按行角色，不靠宽泛的 bubble 后代检查：turnTail 压缩行
+        // 有专属 data-turn-tail 属性，排除之——否则官方 Tooltip（class 含
+        // "bubble"）挂载进 turnTail 行内时会被误判为 user 行，导航条凭空
+        // 多出一个节点。
+        !row.hasAttribute('data-turn-tail') &&
+        row.querySelector('[class*="bubble"]') !== null)
 
     // 位置：贴近对话流列右缘 + 12px，钳制视口内（列移动时触发，不进每帧路径）。
     const position = (): void => {
