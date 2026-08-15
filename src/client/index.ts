@@ -484,37 +484,49 @@ export default {
     let hoverRow: HTMLElement | null = null
     let hoverAnchor: HTMLElement | null = null
     let hoverDotEl: HTMLElement | null = null
+    // 最新鼠标 Y：每次 mousemove 都更新（即使 rAF 挂起中）。rAF 处理时用
+    // 最新值而非触发时捕获的旧值——否则鼠标在 rAF 挂起期间移动 + 期间
+    // 发生重建时，会用旧 Y 对重建后的新布局算最近节点，把底部药丸加长
+    // 而鼠标其实在别处（偶发"底部幻影药丸"）。
+    let lastHoverY: number | null = null
     const setHoverDot = (dot: HTMLElement | null): void => {
       if (hoverDotEl === dot) return
       hoverDotEl?.classList.remove('hover')
       hoverDotEl = dot
       dot?.classList.add('hover')
     }
+    // hover 处理（预览 + 加长）。重建后也用它按最新 Y 恢复（重建会清掉
+    // dot 的 hover class；鼠标未动时下一次 mousemove 不会到来）。
+    const applyHover = (y: number): void => {
+      const hit = hoverableDot(y)
+      setHoverDot(hit !== null ? hit.dot : null)
+      if (hit === null) {
+        // 移出节点串范围（上下 padding/端点细点区）：清掉残留预览。
+        hoverRow = null
+        hoverAnchor = null
+        hidePreview()
+        return
+      }
+      if (hoverRow === hit.row && hoverAnchor === hit.dot) return
+      hoverRow = hit.row
+      hoverAnchor = hit.dot
+      // 悬停精选节点：预览带 📌 徽标（pinnedRowOf 取该轮次的精选回复行）。
+      const dots = [...bar.querySelectorAll<HTMLElement>('[data-vlln-dot]')]
+      const pinned = pinnedRowOf(allRows(), userRows(), lo + dots.indexOf(hit.dot))
+      showPreview(hit.row, hit.dot, pinned)
+    }
     const onBarMove = (e: MouseEvent): void => {
+      lastHoverY = e.clientY
       if (hoverScheduled) return
       hoverScheduled = true
       requestAnimationFrame(() => {
         hoverScheduled = false
-        const hit = hoverableDot(e.clientY)
-        setHoverDot(hit !== null ? hit.dot : null)
-        if (hit === null) {
-          // 移出节点串范围（上下 padding/端点细点区）：清掉残留预览。
-          hoverRow = null
-          hoverAnchor = null
-          hidePreview()
-          return
-        }
-        if (hoverRow === hit.row && hoverAnchor === hit.dot) return
-        hoverRow = hit.row
-        hoverAnchor = hit.dot
-        // 悬停精选节点：预览带 📌 徽标（pinnedRowOf 取该轮次的精选回复行）。
-        const dots = [...bar.querySelectorAll<HTMLElement>('[data-vlln-dot]')]
-        const pinned = pinnedRowOf(allRows(), userRows(), lo + dots.indexOf(hit.dot))
-        showPreview(hit.row, hit.dot, pinned)
+        if (lastHoverY !== null) applyHover(lastHoverY)
       })
     }
     bar.addEventListener('mousemove', onBarMove)
     bar.addEventListener('mouseleave', () => {
+      lastHoverY = null
       setHoverDot(null)
       hoverRow = null
       hoverAnchor = null
