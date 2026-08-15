@@ -125,7 +125,11 @@ export default {
     preview.style.display = 'none'
     body.appendChild(preview)
 
-    const flowOf = (): HTMLElement | null => document.querySelector('[data-chat-flow=""]')
+    // 流容器：官方聊天流（Chat 视图）优先；「聚焦会话」视图（第三方
+    // dsh-focus-chat）挂载时 Chat 视图已卸载，回退到其列容器
+    // [data-focus-flow]。两视图共享同一滚动容器，定位/滚动/激活跟踪一致。
+    const flowOf = (): HTMLElement | null =>
+      document.querySelector('[data-chat-flow=""]') ?? document.querySelector('[data-focus-flow=""]')
     const scrollerOf = (): HTMLElement | null => {
       const flow = flowOf()
       if (flow === null) return null
@@ -426,6 +430,9 @@ export default {
       // flow 被移除/替换（切出对话页/视图）必须触发重渲染——此时
       // mutation 目标在父级（非 flow 内），过滤条件不匹配，需显式处理。
       if (bindFlow()) {
+        // 流元素身份变化（Chat ↔ 聚焦视图切换）：重绑 IntersectionObserver
+        // 观察新视图的 user 行，激活药丸无需等下一次滚动即正确。
+        bindIO()
         schedule()
         return
       }
