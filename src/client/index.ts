@@ -9,11 +9,22 @@
 // 零数据通道依赖：只靠官方锚点属性（0806 起 user 行为 data-time-hover-root
 //（UserStyleBubble 行），data-chat-flow-kind 已移除）。
 //
-// 构建：复制此文件为 client.js 的手写等价物（CJS + ModuleLoader 包装，
-// 同 greeter 模式），或按 README.md「构建 client bundle」用 bundler 产出。
+// 构建：README.md「构建 client bundle」用 tsdown 产出 lib/client.js
+//（CJS + ModuleLoader 包装）。
+//
+// pin 精选：在 assistant 消息操作条（copy 与 Good response 之间）注册
+// 📌 按钮；精选状态按会话持久化到 localStorage，并以行属性
+// data-vlln-pinned / data-vlln-pin-text 作为 DOM 契约——导航条据此把
+// 对应轮次的节点渲染为金色细长椭圆盘（恒可见、预览卡带 📌 徽标、点击
+// 直达被精选的回复）。
+import React from 'react'
 export default {
   name: 'navbar-client',
-  apply() {
+  // ctx：cordis 客户端根上下文（slots/locale/effect 服务）。
+  // cordis 要求显式声明依赖：apply 内访问的 ctx.locale / ctx.slots
+  // 必须出现在 inject 中，否则报 "cannot get property 'xxx' without inject"。
+  inject: ['locale', 'slots'],
+  apply(ctx: any) {
     const body = document.body
     if (body === null) return
 
@@ -36,13 +47,20 @@ export default {
 [data-vlln-dot] {
   width: 7px; height: 7px; border-radius: 999px; padding: 0; border: none;
   background: rgba(128, 128, 140, .45); cursor: pointer; flex: none; position: relative;
-  transition: width .22s ease, background .22s ease, transform .22s ease;
+  /* width 过渡只挂在增长态（active/hover/pinned）上：获得时平滑拉长，
+   * 失去时立即缩回——否则旧激活药丸会在 .22s 收缩动画里以"灰色宽药丸"
+   * 形态残留（点击跳转后底部出现幻影药丸）。 */
+  transition: background .22s ease, transform .22s ease;
 }
 /* 命中区放大：视觉药丸仍 7px，::after 向四周扩 6px（19px 热区），布局零变化。 */
 [data-vlln-dot]::after {
   content: ''; position: absolute; inset: -6px; border-radius: 999px;
 }
 [data-vlln-dot]:hover { background: var(--dsw-alias-interactive-bg-hover); transform: scale(1.25); }
+/* 增长态挂宽度过渡：获得 active/hover/pinned 时平滑拉长。 */
+[data-vlln-dot].active, [data-vlln-dot].hover, [data-vlln-dot].pinned {
+  transition: width .22s ease, height .22s ease, background .22s ease, transform .22s ease;
+}
 [data-vlln-dot].active {
   width: 22px; border-radius: 999px;
   background: var(--dsw-alias-text-accent, #4c9aff);
@@ -68,6 +86,25 @@ export default {
   pointer-events: none;
 }
 [data-vlln-more] { width: 3px; height: 3px; border-radius: 999px; background: rgba(128,128,140,.5); flex: none; }
+[data-vlln-dot].pinned {
+  /* 精选轮次：金色细长椭圆盘——与普通深灰圆点（7×7）和激活蓝药丸
+   * （22×7）都不同的第三形态，尺寸适中、hover 不膨胀突兀。 */
+  width: 14px; height: 8px; border-radius: 999px; background: #f0b429;
+  filter: drop-shadow(0 0 4px rgba(240, 180, 41, .6));
+}
+[data-vlln-dot].active.pinned {
+  /* 激活中的精选点：拉长为金色胶囊，保持"盘"的细长形态语义。 */
+  width: 22px; height: 8px; border-radius: 999px;
+  background: #f0b429; filter: none;
+}
+[data-vlln-pin-button] {
+  width: 28px; height: 28px; padding: 6px; border: none; border-radius: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--dsw-alias-label-tertiary); background: transparent; cursor: pointer;
+  transition: background .18s ease, color .18s ease;
+}
+[data-vlln-pin-button]:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); }
+[data-vlln-pin-button][data-active] { color: #f0b429; }
 @media (prefers-reduced-motion: reduce) {
   [data-dsh-navbar], [data-vlln-dot], [data-vlln-dot].active {
     transition: none; animation: none;
@@ -100,11 +137,14 @@ export default {
       }
       return null
     }
-    const userRows = (): HTMLElement[] =>
+    // 全部消息行（user + assistant/Think 的 turn-tail 行）：排除 pending
+    // steering。user 行 = UserStyleBubble（data-time-hover-root + 气泡
+    // 结构）；assistant/Think 行 body 无 bubble。
+    const allRows = (): HTMLElement[] =>
       [...document.querySelectorAll<HTMLElement>('[data-time-hover-root]')].filter(row =>
-      // user 行 = UserStyleBubble（data-time-hover-root + 气泡结构）；排除
-      // assistant/Think 行（body 无 bubble）与 pending steering。
-      !row.hasAttribute('data-pending-steering') && row.querySelector('[class*="bubble"]') !== null)
+        !row.hasAttribute('data-pending-steering'))
+    const userRows = (): HTMLElement[] =>
+      allRows().filter(row => row.querySelector('[class*="bubble"]') !== null)
 
     // 位置：贴近对话流列右缘 + 12px，钳制视口内（列移动时触发，不进每帧路径）。
     const position = (): void => {
@@ -150,26 +190,46 @@ export default {
     // 上次重建时绑定的 user 行集合（render 用行身份判据决定是否重建）。
     let builtRows: HTMLElement[] = []
 
-    // 预览：显示消息开头（最多 6 行，CSS line-clamp 截断）。
+    // 预览：显示消息开头（最多 6 行，CSS line-clamp 截断）。精选轮次显示
+    // 被精选回复的文本（pin 时存入行属性 data-vlln-pin-text）并加 📌 徽标。
     const positionPreview = (anchor: HTMLElement): void => {
       const r = anchor.getBoundingClientRect()
       // right 定位：卡片右缘贴 dot 左缘 - 14px（内容短的卡片也贴紧）。
       preview.style.right = `${window.innerWidth - r.left + 14}px`
       preview.style.top = `${Math.min(window.innerHeight - 120, r.top - 12)}px`
     }
-    const showPreview = (row: HTMLElement, anchor: HTMLElement): void => {
+    const showPreview = (row: HTMLElement, anchor: HTMLElement, pinnedRow: HTMLElement | null = null): void => {
       // 消息文本 = 气泡内文本（排除时间戳/操作按钮/分支提示——整行
       // textContent 会混入 actions 和官方提示文案）；CSS line-clamp 6 行
       // 截断。立即显示（导航点小、hover 精确，无需 session list 行的
       // 500ms 防误触延迟）。
-      const bubble = row.querySelector('[class*="bubble"]')
-      const text = ((bubble ?? row).textContent ?? '').trim()
+      let text: string
+      if (pinnedRow !== null) {
+        text = (pinnedRow.getAttribute('data-vlln-pin-text') ?? '').trim()
+        if (text === '') text = ((row.querySelector('[class*="bubble"]') ?? row).textContent ?? '').trim()
+        else text = `📌 精选\n${text}`
+      } else {
+        const bubble = row.querySelector('[class*="bubble"]')
+        text = ((bubble ?? row).textContent ?? '').trim()
+      }
       if (text === '') return
       preview.textContent = text
       preview.style.display = 'block'
       positionPreview(anchor)
     }
     const hidePreview = (): void => { preview.style.display = 'none' }
+
+    // 轮次精选映射：user 行 i 与其下一 user 行之间的 assistant 行中，返回
+    // 第一个带 data-vlln-pinned 标记的（供高亮/预览/跳转使用），没有则 null。
+    const pinnedRowOf = (all: HTMLElement[], rows: HTMLElement[], i: number): HTMLElement | null => {
+      let start = -1
+      for (let k = 0; k < all.length; k++) { if (all[k] === rows[i]) { start = k; break } }
+      if (start < 0) return null
+      const end = i + 1 < rows.length ? all.indexOf(rows[i + 1]) : all.length
+      if (end < 0) return null
+      for (let k = start; k < end; k++) { if (all[k]?.hasAttribute('data-vlln-pinned')) return all[k]! }
+      return null
+    }
 
     // 渲染节点串：等距节点 + 滑动窗口（>11 时显示激活 ± 5，端点细点）。
     const render = (): void => {
@@ -188,18 +248,36 @@ export default {
       bar.style.display = 'flex'
       const active = computeActive()
       activeIndex = active
-      // 窗口：>11 节点时截断（显示激活附近一段），端点细点暗示还有更多。
+      // 精选轮次：每 user 行对应的 assistant 区间内是否有 data-vlln-pinned 行。
+      const all = allRows()
+      const pinnedRowOfTurn = (i: number): HTMLElement | null => pinnedRowOf(all, rows, i)
+      const pinnedIndexes: number[] = []
+      for (let i = 0; i < rows.length; i++) if (pinnedRowOfTurn(i) !== null) pinnedIndexes.push(i)
+      // 窗口：>11 节点时截断（显示激活附近一段），端点细点暗示还有更多；
+      // 精选节点恒可见：窗口扩到包含全部精选索引。
       const windowed = rows.length > WINDOW
       lo = windowed ? Math.max(0, active - HALF_WINDOW) : 0
-      const hi = windowed ? Math.min(rows.length - 1, active + HALF_WINDOW) : rows.length - 1
+      let hi = windowed ? Math.min(rows.length - 1, active + HALF_WINDOW) : rows.length - 1
+      if (pinnedIndexes.length > 0) {
+        lo = Math.min(lo, pinnedIndexes[0]!)
+        hi = Math.max(hi, pinnedIndexes[pinnedIndexes.length - 1]!)
+      }
       // 重建判据：行元素身份逐一相等（会话切换/流重建后行换新，数量相同
       // 也不该走快速路径——否则 dot 残留旧行绑定）+ 当前子元素数与应建
-      // 结构一致（窗口滑到端点时端点细点增减也要重建）。
+      // 结构一致（窗口滑到端点/精选扩展变化时结构增减也要重建）。
       const expectedCount = hi - lo + 1 + (lo > 0 ? 1 : 0) + (hi < rows.length - 1 ? 1 : 0)
       const sameRows = rows.length === builtRows.length && rows.every((row, i) => row === builtRows[i])
       if (sameRows && bar.childElementCount === expectedCount) {
         // 行与结构未变：只移动激活态（重建会重挂 dot，滚动时不应重建）。
         updateActiveClass(active)
+        // pin/unpin 不改变点数时也需同步精选 class（否则非窗口模式下
+        // 点击精选按钮后金色盘不出现）。
+        const dots = [...bar.querySelectorAll<HTMLElement>('[data-vlln-dot]')]
+        dots.forEach((dot, i) => {
+          const pinnedRow = pinnedRowOfTurn(i + lo)
+          if (pinnedRow !== null) dot.classList.add('pinned')
+          else dot.classList.remove('pinned')
+        })
         return
       }
       bar.textContent = ''
@@ -212,9 +290,10 @@ export default {
         const dot = document.createElement('button')
         dot.type = 'button'
         dot.setAttribute('data-vlln-dot', '')
+        const pinnedRow = pinnedRowOfTurn(i)
         // aria-label 而非 title：title 会叠加浏览器原生 tooltip（与预览卡
         // 重复）；aria-label 不显示 tooltip 但保留可访问名。
-        dot.setAttribute('aria-label', `user #${i + 1}（点击跳转）`)
+        dot.setAttribute('aria-label', `user #${i + 1}${pinnedRow !== null ? '（已精选）' : ''}（点击跳转）`)
         // 窗口内序号（第 p 个 dot ↔ 行 lo+p）。事件触发时用当前 lo 动态
         // 解析行——窗口滑动不重建时也能命中正确消息（无过期闭包）。
         const p = i - lo
@@ -222,14 +301,16 @@ export default {
         // 药丸只保留键盘 focus/blur 与点击。
         dot.addEventListener('focus', () => {
           const row = userRows()[lo + p]
-          if (row !== undefined) showPreview(row, dot)
+          if (row !== undefined) showPreview(row, dot, pinnedRowOfTurn(lo + p))
         })
         dot.addEventListener('blur', hidePreview)
         dot.addEventListener('click', () => {
+          // 精选轮次点击直达被精选的回复（否则维持跳 user 行）。
           const row = userRows()[lo + p]
-          if (row !== undefined) jumpToRow(row)
+          if (row !== undefined) jumpToRow(pinnedRowOfTurn(lo + p) ?? row)
         })
         if (i === active) dot.classList.add('active')
+        if (pinnedRow !== null) dot.classList.add('pinned')
         bar.appendChild(dot)
       }
       if (windowed && hi < rows.length - 1) {
@@ -419,7 +500,10 @@ export default {
         if (hoverRow === hit.row && hoverAnchor === hit.dot) return
         hoverRow = hit.row
         hoverAnchor = hit.dot
-        showPreview(hit.row, hit.dot)
+        // 悬停精选节点：预览带 📌 徽标（pinnedRowOf 取该轮次的精选回复行）。
+        const dots = [...bar.querySelectorAll<HTMLElement>('[data-vlln-dot]')]
+        const pinned = pinnedRowOf(allRows(), userRows(), lo + dots.indexOf(hit.dot))
+        showPreview(hit.row, hit.dot, pinned)
       })
     }
     bar.addEventListener('mousemove', onBarMove)
@@ -437,7 +521,11 @@ export default {
       const t = e.target as HTMLElement | null
       if (t !== null && t.closest('[data-vlln-dot]') !== null) return
       const hit = nearestDot(e.clientY)
-      if (hit !== null) jumpToRow(hit.row)
+      if (hit === null) return
+      // 整条点击同样尊重精选语义：命中精选轮次则直达被精选的回复。
+      const dots = [...bar.querySelectorAll<HTMLElement>('[data-vlln-dot]')]
+      const pinned = pinnedRowOf(allRows(), userRows(), lo + dots.indexOf(hit.dot))
+      jumpToRow(pinned ?? hit.row)
     })
 
     // 滚轮切换：光标在导航条上时，向上滚=上一条、向下滚=下一条；preventDefault
@@ -456,6 +544,104 @@ export default {
       if (next === base) return
       jumpToRow(rows[next])
     }, { passive: false })
+
+    // ─── pin 精选 ──────────────────────────────────────────────────
+    // 精选状态：按会话持久化到 localStorage；DOM 契约 = assistant 行上的
+    // data-vlln-pinned（标记）与 data-vlln-pin-text（回复文本预览）。行标记
+    // 由 PinAction 在挂载时按 store 恢复，导航条只读属性、不碰 store——
+    // 刷新后精选状态由按钮组件自动重建，导航条 MutationObserver 之外还
+    // 需要显式 schedule()（属性变更不触发 childList 观察）。
+    interface PinItem { messageId: string; text: string; ts: number }
+    const pinStore = {
+      key(sessionId: string): string { return `dsh-navbar:pins:${sessionId}` },
+      load(sessionId: string): PinItem[] {
+        try { return JSON.parse(localStorage.getItem(this.key(sessionId)) ?? '[]') as PinItem[] } catch { return [] }
+      },
+      isPinned(sessionId: string, messageId: string): boolean {
+        return this.load(sessionId).some((p) => p.messageId === messageId)
+      },
+      textOf(sessionId: string, messageId: string): string | undefined {
+        return this.load(sessionId).find((p) => p.messageId === messageId)?.text
+      },
+      // 切换一条精选；返回切换后的状态（true = 已精选）。
+      toggle(sessionId: string, messageId: string, text: string): boolean {
+        const pins = this.load(sessionId)
+        const i = pins.findIndex((p) => p.messageId === messageId)
+        if (i >= 0) pins.splice(i, 1)
+        else pins.push({ messageId, text, ts: Date.now() })
+        localStorage.setItem(this.key(sessionId), JSON.stringify(pins))
+        return i < 0
+      },
+    }
+    // pin 时的回复文本：行首个子节点（turnTail 渲染结果），取不到回退整行。
+    const pinRowText = (button: HTMLElement | null): string => {
+      const row = button?.closest('[data-time-hover-root]')
+      const tail = row?.children[0]
+      const text = ((tail ?? row)?.textContent ?? '').trim()
+      return text.length > 160 ? `${text.slice(0, 160)}…` : text
+    }
+    // 同步行标记 + 触发导航条重渲染（属性变更不走 MutationObserver）。
+    const syncPinRow = (button: HTMLElement | null, isPinned: boolean, text?: string): void => {
+      const row = button?.closest('[data-time-hover-root]')
+      if (row === null || row === undefined) return
+      if (isPinned) {
+        row.setAttribute('data-vlln-pinned', '')
+        row.setAttribute('data-vlln-pin-text', text ?? '')
+      } else {
+        row.removeAttribute('data-vlln-pinned')
+        row.removeAttribute('data-vlln-pin-text')
+      }
+      schedule()
+    }
+    // 消息操作条按钮：copy 与 Good response（feedback，order 10）之间。
+    function PinAction(props: { messageId: string; sessionId: string; t: (key: string) => string }): React.ReactElement {
+      const { messageId, sessionId, t } = props
+      const [active, setActive] = React.useState(() => pinStore.isPinned(sessionId, messageId))
+      const ref = React.useRef<HTMLButtonElement | null>(null)
+      // 挂载/身份变化时按 store 恢复行标记（刷新后精选状态由此重建）。
+      React.useEffect(() => {
+        syncPinRow(ref.current, pinStore.isPinned(sessionId, messageId), pinStore.textOf(sessionId, messageId))
+      }, [messageId, sessionId])
+      const label = active ? t('action.unpin') : t('action.pin')
+      return React.createElement(
+        'button',
+        {
+          type: 'button',
+          ref,
+          'data-vlln-pin-button': '',
+          'data-active': active || undefined,
+          'aria-pressed': active,
+          'aria-label': label,
+          title: label,
+          onClick: () => {
+            const text = pinRowText(ref.current)
+            const next = pinStore.toggle(sessionId, messageId, text)
+            setActive(next)
+            syncPinRow(ref.current, next, text)
+          },
+        },
+        React.createElement(
+          'svg',
+          { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'currentColor', 'aria-hidden': true },
+          React.createElement('path', { d: 'M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z' })
+        )
+      )
+    }
+    const PIN_NS = 'pin'
+    ctx.effect(() => ctx.locale.register(PIN_NS, {
+      zh: { 'action.pin': '精选', 'action.unpin': '取消精选' },
+      en: { 'action.pin': 'Pin', 'action.unpin': 'Unpin' },
+    }), 'navbar: pin dictionaries')
+    ctx.slots.inject('conversation.chat.assistant-actions', () => {
+      const dispose = ctx.slots.register({
+        name: 'conversation.chat.assistant-actions',
+        id: 'pin',
+        order: 5,
+        locale: PIN_NS,
+        inject: (sessionId: string) => ({ sessionId }),
+      }, PinAction)
+      return () => { dispose() }
+    })
 
     // 插件生命周期：unload 时清理（fiber dispose → apply 返回的 disposer）。
     return () => {
