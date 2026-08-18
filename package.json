@@ -42,7 +42,12 @@
     "build": "tsdown --config ./tsdown.config.ts"
   },
   "devDependencies": {
-    "tsdown": "0.22.2"
+    "tsdown": "0.22.2",
+    "typescript": "^5.9.3"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vlln/+process.argv[1]+.git"
+  }
 }
