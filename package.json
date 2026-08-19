@@ -6,7 +6,8 @@
   "main": "lib/index.mjs",
   "files": [
     "lib",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "README.zh.md"
   ],
   "publishConfig": {
     "access": "public"
