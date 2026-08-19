@@ -33,7 +33,8 @@
 **推荐：git 源一行安装**（构建产物已入库，git 源不触发构建）：
 
 ```sh
-dsh plugin --profile web add "github:vlln/dsh-navbar#main"
+dsh plugin --profile web add "github:vlln/dsh-navbar#main"   # git 源一行（构建产物已入库）
+# 或 npm 源：dsh plugin --profile web add @vlln/dsh-navbar@0.3.0
 ```
 
 或本地目录（有源码时）：`git clone` 后 `cd dsh-navbar && dsh plugin --profile web add .`。
