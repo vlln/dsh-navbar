@@ -25,6 +25,7 @@ An evenly spaced node strip along the right edge of the conversation area (one n
 | Scroll-wheel switching | With the cursor over the rail, scrolling the wheel moves up/down one message (blocking conversation-area scrolling) |
 | Click to jump | The whole rail is clickable (including gaps, jumping to the nearest node) plus an enlarged pill hit area — no need to precisely aim at tiny dots |
 | Sliding window | When there are more than 11 nodes, only the nodes inside the window are shown (avoids overflow) |
+| Load earlier history | An ↑ button pinned at the top of the rail (visible only while the conversation has older history): click to load earlier messages — it forwards to the official load-older control, so your reading position is preserved. Hovering it instantly shows a hint card in the same style as the node previews (the official HoverCard look) |
 | Auto-hide | Not shown with fewer than 2 user messages or on non-conversation pages |
 | Message pin | 📌 button on the assistant action bar (between copy and Good response); pinned turns render as a golden slim elliptical disc in the rail (always visible, the preview card carries a 📌 badge, clicking jumps straight to the pinned reply), persisted per session |
 
@@ -36,7 +37,7 @@ Zero data-channel dependencies: driven only by official anchor attributes (`data
 
 ```sh
 dsh plugin --profile web add "github:vlln/dsh-navbar#main"   # one-line git-source install (build artifacts committed)
-# or npm source: dsh plugin --profile web add @vlln/dsh-navbar@0.3.0
+# or npm source: dsh plugin --profile web add @vlln/dsh-navbar@0.4.0
 ```
 
 Or from a local directory (when you have the source): `git clone`, then `cd dsh-navbar && dsh plugin --profile web add .`.
@@ -48,6 +49,8 @@ Or from a local directory (when you have the source): `git clone`, then `cd dsh-
 Works out of the box — no commands, no tools. The node rail appears on the right edge of the conversation page (Chat view); hover for a preview, click to jump. Animations are disabled under `prefers-reduced-motion`.
 
 **Pin**: hover an assistant message's action bar and click 📌 to pin that reply — the corresponding turn's navigation node becomes a golden slim elliptical disc (click to jump straight to that reply; the preview card shows a 📌 badge and the reply text). Pin state is saved per session in browser localStorage and survives refreshes; click again to unpin.
+
+**Load earlier history**: when the open conversation still has older messages (its history window is not fully loaded), an ↑ button sits at the very top of the node rail. Click it to load the earlier messages — the rail then grows new nodes at the top. The button hides automatically once all history is loaded, and is disabled while a load is in flight. Hovering it instantly shows a hint card in the same style as the node previews (the official HoverCard look), and it reads "Loading…" while a load is in flight. The click is forwarded to the official load-older control, so your current reading position is preserved (no content jump).
 
 ## Development
 

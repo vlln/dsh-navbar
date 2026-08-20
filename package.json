@@ -1,7 +1,7 @@
 {
   "name": "@vlln/dsh-navbar",
   "description": "对话节点导航条——user 消息快速跳转（自渲染 DOM，官方 client 通道）",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "main": "lib/index.mjs",
   "files": [

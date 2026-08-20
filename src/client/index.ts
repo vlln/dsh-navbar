@@ -93,6 +93,42 @@ export default {
   pointer-events: none;
 }
 [data-vlln-more] { width: 3px; height: 3px; border-radius: 999px; background: rgba(128,128,140,.5); flex: none; }
+/* 「加载更早历史」按钮：贴导航条最上方，仅当会话还有更早历史（官方加载
+ * 更早按钮存在）时显示。视觉：20px 柔和圆形按钮——官方 token 背景 + 发丝
+ * 描边（静态可读、不刺眼），悬停品牌色亮起 + 箭头微抬。水平居中于药丸列
+ * 正上方（药丸列保持左对齐不移动）：margin 0 -6.5px 使 margin-box 宽度 =
+ * 7px（20 - 2×6.5），与药丸列同宽同起点，视觉中心即药丸列中心；药丸伸缩
+ * （7px→22px 药丸向右延伸）不影响按钮位置。loadingOlder 期间禁用置灰。
+ * ::after 放大命中区（20px 视觉 → 28px 热区）。 */
+[data-vlln-load-older] {
+  width: 20px; height: 20px; padding: 0; border: none; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none; cursor: pointer; position: relative;
+  margin: 0 -6.5px;
+  color: var(--dsw-alias-label-secondary, rgba(128, 128, 140, .75));
+  background: var(--dsw-alias-bg-layer-2, rgba(128, 128, 140, .1));
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2, rgba(128, 128, 140, .2));
+  transition: color .18s ease, background .18s ease, box-shadow .18s ease;
+}
+[data-vlln-load-older]::after {
+  content: ''; position: absolute; inset: -4px; border-radius: 999px;
+}
+[data-vlln-load-older] svg {
+  transition: transform .18s ease;
+}
+[data-vlln-load-older]:hover {
+  color: var(--dsw-alias-brand-primary, #4c9aff);
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 140, .16));
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l3, rgba(128, 128, 140, .3));
+}
+[data-vlln-load-older]:hover svg { transform: translateY(-1px); }
+[data-vlln-load-older]:disabled { opacity: .38; cursor: default; }
+[data-vlln-load-older]:disabled:hover {
+  color: var(--dsw-alias-label-secondary, rgba(128, 128, 140, .75));
+  background: var(--dsw-alias-bg-layer-2, rgba(128, 128, 140, .1));
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2, rgba(128, 128, 140, .2));
+}
+[data-vlln-load-older]:disabled:hover svg { transform: none; }
 [data-vlln-dot].pinned {
   /* 精选轮次：金色细长椭圆盘——与普通深灰圆点（7×7）和激活蓝药丸
    * （22×7）都不同的第三形态，尺寸适中、hover 不膨胀突兀。 */
@@ -116,7 +152,8 @@ export default {
 [data-vlln-pin-button]:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); }
 [data-vlln-pin-button][data-active] { color: #f0b429; }
 @media (prefers-reduced-motion: reduce) {
-  [data-dsh-navbar], [data-vlln-dot], [data-vlln-dot].active {
+  [data-dsh-navbar], [data-vlln-dot], [data-vlln-dot].active, [data-vlln-load-older],
+  [data-vlln-load-older] svg {
     transition: none; animation: none;
   }
 }
@@ -134,6 +171,28 @@ export default {
     preview.setAttribute('data-vlln-preview', '')
     preview.style.display = 'none'
     body.appendChild(preview)
+
+    // 「加载更早历史」按钮：导航条最上方，仅当会话还有更早历史时显示。
+    // 点击转发给官方加载更早按钮（ChatView 的 loadOlderAnchored）——官方
+    // 自带滚动锚定（保持当前阅读位置）与 loadingOlder 防重入，本插件不做
+    // 第二份数据通道（维持零数据通道依赖的锚点契约）。
+    const loadOlderLabel = ctx.locale.getLocale().active.startsWith('zh')
+      ? '加载更早历史'
+      : 'Load earlier history'
+    const loadOlderLoading = ctx.locale.getLocale().active.startsWith('zh')
+      ? '加载中…'
+      : 'Loading…'
+    const loadOlderEl = document.createElement('button')
+    loadOlderEl.type = 'button'
+    loadOlderEl.setAttribute('data-vlln-load-older', '')
+    loadOlderEl.style.display = 'none'
+    loadOlderEl.setAttribute('aria-label', loadOlderLabel)
+    // 不用 title：原生 tooltip 延迟显示、浏览器默认样式，与预览卡重复；
+    // hover 提示走下方与节点预览同款的 [data-vlln-preview] 卡片（立即显示）。
+    loadOlderEl.innerHTML =
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+      + 'stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<path d="M18 15l-6-6-6 6"/></svg>'
 
     // 流容器：官方聊天流（Chat 视图）优先；「聚焦会话」视图（第三方
     // dsh-focus-chat）挂载时 Chat 视图已卸载，回退到其列容器
@@ -165,6 +224,23 @@ export default {
         // 多出一个节点。
         !row.hasAttribute('data-turn-tail') &&
         row.querySelector('[class*="bubble"]') !== null)
+
+    // 官方「加载更早」按钮（ChatView 渲染在流列内、hasMore 时存在，加载中
+    // 带 disabled）。按结构定位而非 hash class：流列的直接子元素中，跳过
+    // 消息行（data-chat-flow-key），第一个"直接子级含 button[type=button]"
+    // 的元素就是加载更早容器（hint/openError/turnStatus 均无按钮，且都在
+    // 它之前渲染）。存在 = 还有更早历史；disabled = 加载中。
+    const olderButtonOf = (): HTMLButtonElement | null => {
+      const flow = flowOf()
+      if (flow === null) return null
+      for (const child of flow.children) {
+        if (!(child instanceof HTMLElement)) continue
+        if (child.hasAttribute('data-chat-flow-key')) continue
+        const button = child.querySelector<HTMLButtonElement>(':scope > button[type="button"]')
+        if (button !== null) return button
+      }
+      return null
+    }
 
     // 位置：贴近对话流列右缘 + 12px，钳制视口内（列移动时触发，不进每帧路径）。
     const position = (): void => {
@@ -284,6 +360,21 @@ export default {
     }
     const hidePreview = (): void => { preview.style.display = 'none' }
 
+    // 「加载更早历史」按钮的 hover 提示：复用节点预览卡（[data-vlln-preview]，
+    // 官方 HoverCard 同款视觉 = dsh 标准样式），鼠标进入/focus 立即显示、
+    // 离开/blur 立即隐藏，无延迟。mousemove 阻止冒泡：导航条级 applyHover
+    // 把按钮区域判为"节点串范围外"会 hidePreview，立即盖掉刚显示的卡片。
+    const showLoadOlderPreview = (): void => {
+      preview.textContent = loadOlderEl.disabled ? loadOlderLoading : loadOlderLabel
+      preview.style.display = 'block'
+      positionPreview(loadOlderEl)
+    }
+    loadOlderEl.addEventListener('mouseenter', showLoadOlderPreview)
+    loadOlderEl.addEventListener('mouseleave', hidePreview)
+    loadOlderEl.addEventListener('focus', showLoadOlderPreview)
+    loadOlderEl.addEventListener('blur', hidePreview)
+    loadOlderEl.addEventListener('mousemove', (e) => { e.stopPropagation() })
+
     // 轮次精选映射：user 行 i 与其下一 user 行之间的 assistant 行中，返回
     // 第一个带 data-vlln-pinned 标记的（供高亮/预览/跳转使用），没有则 null。
     const pinnedRowOf = (all: HTMLElement[], rows: HTMLElement[], i: number, turns: Set<number>): HTMLElement | null => {
@@ -318,6 +409,12 @@ export default {
         return
       }
       bar.style.display = 'flex'
+      // 「加载更早历史」：官方按钮存在 = 会话还有更早历史；loadingOlder
+      // 期间官方按钮 disabled，同步禁用。同步放在重建判据之前，因此快速
+      // 路径（hasMore 翻转不改行数）也能拿到最新的显示/禁用态。
+      const older = olderButtonOf()
+      loadOlderEl.style.display = older === null ? 'none' : ''
+      loadOlderEl.disabled = older === null ? true : older.disabled
       const active = computeActive()
       activeIndex = active
       // 精选轮次：每 user 行对应的 assistant 区间内是否有精选行。先从精选
@@ -339,8 +436,9 @@ export default {
       }
       // 重建判据：行元素身份逐一相等（会话切换/流重建后行换新，数量相同
       // 也不该走快速路径——否则 dot 残留旧行绑定）+ 当前子元素数与应建
-      // 结构一致（窗口滑到端点/精选扩展变化时结构增减也要重建）。
-      const expectedCount = hi - lo + 1 + (lo > 0 ? 1 : 0) + (hi < rows.length - 1 ? 1 : 0)
+      // 结构一致（窗口滑到端点/精选扩展/加载更早按钮增减时结构变化也要
+      // 重建）。加载更早按钮恒为导航条首子元素（display:none 也计数）。
+      const expectedCount = hi - lo + 1 + (lo > 0 ? 1 : 0) + (hi < rows.length - 1 ? 1 : 0) + 1
       const sameRows = rows.length === builtRows.length && rows.every((row, i) => row === builtRows[i])
       if (sameRows && bar.childElementCount === expectedCount) {
         // 行与结构未变：只移动激活态（重建会重挂 dot，滚动时不应重建）。
@@ -356,6 +454,9 @@ export default {
         return
       }
       bar.textContent = ''
+      // 加载更早按钮恒在导航条最上方（首子元素）；bar.textContent 清空后
+      // 需重新挂回。
+      bar.appendChild(loadOlderEl)
       if (windowed && lo > 0) {
         const more = document.createElement('span')
         more.setAttribute('data-vlln-more', '')
@@ -605,12 +706,21 @@ export default {
       hidePreview()
     })
 
+    // 「加载更早历史」点击：转发给官方按钮（loadOlderAnchored——自带滚动
+    // 锚定与 loadingOlder 防重入）。stopPropagation 防止触发下方整条导航条
+    // 的"点击跳到最近节点"。
+    loadOlderEl.addEventListener('click', (e) => {
+      e.stopPropagation()
+      olderButtonOf()?.click()
+    })
+
     // 整条导航条可点：点击任意位置（含间隙/padding/端点细点）跳到最近
     // 节点——不再需要精确瞄准 7px 小圆点。药丸自身点击仍走各自 handler
-    // （精确命中 + 键盘激活）。
+    // （精确命中 + 键盘激活）；加载更早按钮同样排除（有自己的 handler）。
     bar.addEventListener('click', (e) => {
       const t = e.target as HTMLElement | null
-      if (t !== null && t.closest('[data-vlln-dot]') !== null) return
+      if (t !== null
+        && (t.closest('[data-vlln-dot]') !== null || t.closest('[data-vlln-load-older]') !== null)) return
       const hit = nearestDot(e.clientY)
       if (hit === null) return
       // 整条点击同样尊重精选语义：命中精选轮次则直达被精选的回复。
